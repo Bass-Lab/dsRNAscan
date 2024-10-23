@@ -79,11 +79,6 @@ Output
  
 	•	Base Pair Prediction File (<basename>.dsRNApredictions.bp): Provides base pair predictions in a tab-separated format.
 
-Advanced Options
-	• Parallel Processing: Use the --cpus flag to specify the number of CPUs for parallel processing, allowing faster analysis of large genomic datasets.
-	•	Reverse Strand Analysis: The --reverse flag enables scanning of the reverse strand by generating reverse complement sequences.
-
-
 
 Logging
 
