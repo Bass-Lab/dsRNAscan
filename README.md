@@ -32,7 +32,7 @@ cd dsRNAscan
 Basic Command-Line Usage
 
 ```bash
-python dsRNAscan.py --input <input_fasta_file> --output <output_csv_file>
+python dsRNAscan.py --input <input_fasta_file> 
 ```
 
 Key Parameters
