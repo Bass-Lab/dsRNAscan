@@ -1,6 +1,6 @@
 # dsRNAscan
 
-**dsRNAscan** is a bioinformatics tool designed to identify and characterize **double-stranded RNAs (dsRNAs)** encoded by genomic sequences. It scans the genome for potential dsRNA-forming regions by predicting intra-molecular base pairing, evaluating various structural characteristics, and identifying key features relevant to dsRNA biology, such as RNA editing by ADAR enzymes.
+**dsRNAscan** is a bioinformatics tool designed to identify and characterize **double-stranded RNAs (dsRNAs)** encoded by genomic sequences. 
 
 ## Requirements
 
