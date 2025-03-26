@@ -1,0 +1,34 @@
+{% set version = "0.1.0" %}
+package:
+  name: dsrnascan
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  
+
+requirements:
+  host:
+    - python
+    - pip
+    - {{ compiler('c') }}      # Uses the appropriate C compiler (clang on osx, gcc on linux)
+    - emboss
+  run:
+    - python
+    - biopython
+    - numpy
+    - pandas
+    - ViennaRNA
+    - emboss
+
+test:
+  commands:
+    - dsrnascan --help
+    - einverted --help
+
+about:
+  home: "https://github.com/Bass-Lab/dsRNAscan"
+  license: GPL
+  summary: "A tool for predicting dsRNA forming sequences in genomes"

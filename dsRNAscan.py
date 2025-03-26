@@ -3,7 +3,6 @@ import os
 import locale
 import glob
 from Bio import SeqIO
-from Bio.Emboss.Applications import EInvertedCommandline
 import argparse
 import subprocess
 import re
@@ -22,6 +21,63 @@ def is_valid_fragment(fragment):
     # Validation logic for fragment
     return fragment != len(fragment) * "N"
 
+def predict_hybridization(seq1, seq2):
+    """
+    Predict RNA-RNA interactions using RNAduplex.
+    
+    Args:
+        seq1 (str): First RNA sequence
+        seq2 (str): Second RNA sequence
+    
+    Returns:
+        str: Raw output from RNAduplex containing structure and energy
+    """
+    process = subprocess.Popen(
+        ["RNAduplex"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    input_data = f"{seq1}\n{seq2}\n".encode("utf-8")
+    stdout, stderr = process.communicate(input_data)
+    #print(f"[DEBUG] RNAduplex stdout: {stdout.decode('utf-8')}")
+    if stderr:
+         print(f"[DEBUG] RNAduplex stderr: {stderr.decode('utf-8')}")
+    return stdout.decode("utf-8").strip()
+
+def parse_rnaduplex_output(output):
+    """
+    Parse the output from RNAduplex.
+    
+    Example output: "(((...)))&(((...)))  1,9 : 3,11  (-10.40)"
+    
+    Args:
+        output (str): Output string from RNAduplex
+    
+    Returns:
+        tuple: (structure, indices_seq1, indices_seq2, energy)
+    """
+    # print(f"[DEBUG] Parsing RNAduplex output: {output}")
+    parts = output.split()
+    # print(f"[DEBUG] RNAduplex parts: {parts}")
+    
+    structure = parts[0]
+    indices_seq1 = [int(x) for x in parts[1].split(',')]
+    indices_seq2 = [int(x) for x in parts[3].split(',')]
+    
+    # Extract energy from the output
+    energy = None
+    if len(parts) > 4:
+        # Energy is typically in the format (-10.40)
+        energy_str = parts[4].strip('()')
+        try:
+            energy = float(energy_str)
+        except ValueError:
+            print(f"Warning: Could not parse energy value '{energy_str}' from RNAduplex output")
+    
+    return structure, indices_seq1, indices_seq2, energy
+
+
 def process_window(i, window_start, window_size, basename, algorithm, args, fasta_file, chromosome):
     pid = os.getpid()
     temp_filename = f"{basename}_{pid}.txt"
@@ -30,8 +86,10 @@ def process_window(i, window_start, window_size, basename, algorithm, args, fast
         start_pos = i + 1  # EMBOSS uses 1-based indexing
         end_pos = i + window_size
         einverted_cmd = f"/usr/local/bin/einverted -sequence {fasta_file} -sbegin {start_pos} -send {end_pos} -gap {args.gaps} -threshold {args.score} -match {args.match} -mismatch {args.mismatch} -maxrepeat {args.max_span} -filter"
+        # print(f"[DEBUG] Running einverted command: {einverted_cmd}")
         process = subprocess.Popen(einverted_cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, _ = process.communicate()
+        # print(f"[DEBUG] einverted stdout: {stdout}")
         ein_results = stdout.split("\n")
         parse_einverted_results(ein_results, window_start, window_size, basename, args, temp_filename, chromosome)
 
@@ -67,9 +125,15 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             # RNA folding and scoring
             i_seq = seq_i_full[1].replace("-", "").upper()
             j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
-            duplex_info = RNA.duplexfold(i_seq, j_seq)
-            energy = round(float(duplex_info.energy), 2)
-            structure = str(duplex_info.structure)
+            # print(f"[DEBUG] Predicting hybridization for i_seq: {i_seq} and j_seq: {j_seq}")
+            output = predict_hybridization(i_seq, j_seq)
+            # print(f"[DEBUG] RNAduplex output for current pair: {output}")
+            structure, indices_seq1, indices_seq2, energy = parse_rnaduplex_output(output)
+            # Use the returned indices as the corrected coordinates directly:
+            eff_i = (indices_seq1[0], indices_seq1[1])
+            eff_j = (indices_seq2[0], indices_seq2[1])
+            #energy = round(float(duplex_info.energy), 2)
+            #structure = str(duplex_info.structure)
             pairs = int(structure.count('(') * 2)
             percent_paired = round(float(pairs / (len(structure) - 1)) * 100, 2)
             if match_perc < args.paired_cutoff:
@@ -79,7 +143,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 continue
             
             # Writing results to the ein_results file
-            temp_file.write(f"{chromosome}\t{i_start}\t{i_end}\t{j_start}\t{j_end}\t{score}\t{raw_match}\t{match_perc}\t{gap_numb}\t{i_seq}\t{j_seq}\t{structure}\t{energy}\t{percent_paired}\n")
+            temp_file.write(f"{chromosome}\t{i_start}\t{i_end}\t{j_start}\t{j_end}\t{eff_i[0]}\t{eff_i[1]}\t{eff_j[0]}\t{eff_j[1]}\t{score}\t{raw_match}\t{match_perc}\t{gap_numb}\t{i_seq}\t{j_seq}\t{structure}\t{energy}\t{percent_paired}\n")
             #print(f"{basename}\t{i_start}\t{i_end}\t{j_start}\t{j_end}\t{score}\t{raw_match}\t{match_perc}\t{gap_numb}\t{i_seq}\t{j_seq}\t{structure}\t{energy}\t{percent_paired}\n")
             
             # Increment j based on the structure of your einverted output
@@ -89,7 +153,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
 def process_frame(frame_start, frame_step_size, end_coordinate, window_size, basename, algorithm, args, fasta_file, chromosome, pool):
     for start in range(frame_start, end_coordinate, frame_step_size):
         window_start = start
-        end = min(start + window_size, end_coordinate)
+        #end = min(start + window_size, end_coordinate)
         pool.apply_async(process_window, (start, window_start, window_size, basename, algorithm, args, fasta_file, chromosome))
 
 
@@ -101,7 +165,7 @@ def main():
     parser.add_argument('-t', type=int, default=37,
                         help='Folding temperature in celsius; default = 37C')
     parser.add_argument('-s', '--step', type=int, default=150,
-                        help='Step size; default = 500')
+                        help='Step size; default = 150')
     parser.add_argument('-w', type=int, default=10000,
                         help='Window size; default = 10000')
     parser.add_argument('--max_span', type=int, default=10000,
@@ -147,7 +211,8 @@ def main():
         # Process each sequence
         tasks = []
 
-        for cur_record in SeqIO.parse(f, "fasta"):            
+        for cur_record in SeqIO.parse(f, "fasta"): 
+            print(f"Processing sequence: {cur_record.name}")           
             # Check if chromosome is 'header'
             if args.chr == "header":
                 chromosome = cur_record.name
@@ -168,7 +233,7 @@ def main():
 
             # Set up result files
             with open(f"{basename}.ein_results.txt", 'w+') as results_file:
-                results_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
+                results_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
             
             with open(f"{basename}.dsRNApredictions.bp", 'w+') as bp_file:
                 # Example header - adjust based on your requirements
@@ -178,14 +243,17 @@ def main():
             # Process each sequence
             end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
             
+            # Print what we're scanning now
+            print(f"Scanning {cur_record.name} from {args.start} to {end_coordinate} with window size {args.w} and step size {args.step}")
+            
             frame_step_size = step_size * cpu_count
             for cpu_index in range(cpu_count):
                 frame_start = cpu_index * step_size
 
                 # Start processing at each frame and jump by frame_step_size
                 for start in range(frame_start, end_coordinate, frame_step_size):
-                    end = min(start + args.w, end_coordinate)
-                    tasks.append(pool.apply_async(process_window, (start, args.w, basename, args.algorithm, args, fasta_file, chromosome)))
+                    # Pass 'start' as both the initial coordinate and window_start; window_size is args.w
+                    tasks.append(pool.apply_async(process_window, (start, start, args.w, basename, args.algorithm, args, fasta_file, chromosome)))
             
             # Close the pool
             pool.close()
@@ -195,7 +263,7 @@ def main():
             temp_files = glob.glob(f"{basename}_*.txt")
             merged_filename = f"{basename}_merged_results.txt"
             with open(merged_filename, 'w') as merged_file:
-                merged_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
+                merged_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
                 all_data = []
                 for temp_file in temp_files:
                     with open(temp_file, 'r') as file:
@@ -212,5 +280,3 @@ def main():
 # Run the main function
 if __name__ == "__main__":
     main()
-
-
