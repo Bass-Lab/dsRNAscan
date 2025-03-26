@@ -56,10 +56,10 @@ Key Parameters
 Example
 
 ```bash
-python dsRNAscan.py --input genome.fasta --window-size 10000 --step-size 500
+python dsRNAscan.py --input genome.fasta --window-size 10000 --step-size 150
 ```
 
-This command scans the given genome FASTA file with a window size of 10,000 bp, moving 500 bp at a time (this is also the default setting).
+This command scans the given genome FASTA file with a window size of 10,000 bp, moving 150 bp at a time (this is also the default setting).
 
 Output
 
