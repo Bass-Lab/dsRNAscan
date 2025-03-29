@@ -356,26 +356,98 @@ def parse_rnaduplex_output(output):
     Returns:
         tuple: (structure, indices_seq1, indices_seq2, energy)
     """
-    # print(f"[DEBUG] Parsing RNAduplex output: {output}")
-    parts = output.split()
-    # print(f"[DEBUG] RNAduplex parts: {parts}")
-    
-    structure = parts[0]
-    indices_seq1 = [int(x) for x in parts[1].split(',')]
-    indices_seq2 = [int(x) for x in parts[3].split(',')]
-    
-    # Extract energy from the output
-    energy = None
-    if len(parts) > 4:
-        # Energy is typically in the format (-10.40)
-        energy_str = parts[4].strip('()')
+    try:
+        # print(f"[DEBUG] Parsing RNAduplex output: {output}")
+        parts = output.split()
+        # print(f"[DEBUG] RNAduplex parts: {parts}")
+        
+        # Handle empty or invalid output
+        if not parts or len(parts) < 4:
+            print(f"Warning: Invalid RNAduplex output: {output}")
+            return "", [0, 0], [0, 0], 0.0
+        
+        structure = parts[0]
+        
+        # Parse indices more safely
         try:
-            energy = float(energy_str)
-        except ValueError:
-            print(f"Warning: Could not parse energy value '{energy_str}' from RNAduplex output")
-    
-    return structure, indices_seq1, indices_seq2, energy
+            indices_seq1 = [int(x) for x in parts[1].split(',')]
+            if len(indices_seq1) != 2:
+                raise ValueError(f"Expected 2 indices for seq1, got {len(indices_seq1)}")
+        except (ValueError, IndexError) as e:
+            print(f"Warning: Could not parse indices_seq1 from {parts[1] if len(parts) > 1 else 'missing'}: {e}")
+            indices_seq1 = [1, 1]  # Default to position 1
+            
+        try:
+            indices_seq2 = [int(x) for x in parts[3].split(',')]
+            if len(indices_seq2) != 2:
+                raise ValueError(f"Expected 2 indices for seq2, got {len(indices_seq2)}")
+        except (ValueError, IndexError) as e:
+            print(f"Warning: Could not parse indices_seq2 from {parts[3] if len(parts) > 3 else 'missing'}: {e}")
+            indices_seq2 = [1, 1]  # Default to position 1
+        
+        # Extract energy from the output
+        energy = None
+        if len(parts) > 4:
+            # Energy is typically in the format (-10.40)
+            energy_str = parts[4].strip('()')
+            try:
+                energy = float(energy_str)
+            except ValueError:
+                print(f"Warning: Could not parse energy value '{energy_str}' from RNAduplex output")
+                energy = 0.0
+        else:
+            energy = 0.0
+        
+        return structure, indices_seq1, indices_seq2, energy
+    except Exception as e:
+        print(f"Error parsing RNAduplex output: {e}")
+        return "", [1, 1], [1, 1], 0.0
 
+def safe_extract_effective_seq(row, seq_col, start_col, end_col):
+    """
+    Safely extract a subsequence based on the effective indices.
+    Handles type conversion, boundary checking, and exceptions.
+    
+    Args:
+        row: DataFrame row
+        seq_col: Column name for the sequence
+        start_col: Column name for the start index
+        end_col: Column name for the end index
+        
+    Returns:
+        str: The extracted subsequence or the full sequence if extraction fails
+    """
+    try:
+        # Make sure we have non-empty sequence
+        if not row[seq_col] or pd.isna(row[seq_col]):
+            return ""
+            
+        # Make sure we have valid numbers for indices
+        if pd.isna(row[start_col]) or pd.isna(row[end_col]):
+            return row[seq_col]
+            
+        # Make sure we have integers for slicing
+        start_idx = int(float(row[start_col])) - 1  # Convert to 0-based index
+        end_idx = int(float(row[end_col]))
+        
+        # Make sure indices are valid for the sequence
+        if start_idx < 0:
+            start_idx = 0
+            
+        seq = str(row[seq_col])
+        if end_idx > len(seq):
+            end_idx = len(seq)
+        
+        # Skip extraction if indices are invalid
+        if start_idx >= end_idx or start_idx >= len(seq):
+            return seq
+            
+        # Return the slice
+        return seq[start_idx:end_idx]
+    except (ValueError, TypeError, IndexError) as e:
+        print(f"Warning: Could not extract effective sequence: {e}. Using full sequence instead.")
+        # Return the original sequence as fallback
+        return str(row[seq_col]) if row[seq_col] and not pd.isna(row[seq_col]) else ""
 
 def process_window(i, window_start, window_size, basename, algorithm, args, fasta_file, chromosome, strand):
     """Process a genomic window to identify dsRNA structures"""
@@ -527,7 +599,7 @@ def main():
 
     with open(args.filename) as f:
         # Create a pool of workers for multiprocessing, starting with 2 workers
-        pool = multiprocessing.Pool(cpu_count)
+        # pool = multiprocessing.Pool(cpu_count)
         
         # Process each sequence
         tasks = []
@@ -578,27 +650,47 @@ def main():
 
             # Process each sequence
             end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
-            
-            # Print what we're scanning now
-            print(f"Scanning {cur_record.name} from {args.start} to {end_coordinate} with window size {args.w} and step size {args.step}")
-            
-            # Fixed code:
-            frame_step_size = step_size * cpu_count
-            for cpu_index in range(cpu_count):
-                # Start from the specified start coordinate plus the CPU's offset
-                frame_start = args.start + (cpu_index * step_size)
+            seq_length = end_coordinate - args.start
 
-                # Start processing at each frame and jump by frame_step_size
-                for start in range(frame_start, end_coordinate, frame_step_size):
-                    end_coordinate = (start + args.w)
-                    # Pass 'start' as both the initial coordinate and window_start; window_size is args.w
-                    tasks.append(pool.apply_async(process_window, (start, end_coordinate, args.w, basename, args.algorithm, args, fasta_file, chromosome, strand)))
-                    # For debugging, run the process_window function directly
-                    # process_window(start, start, args.w, basename, args.algorithm, args, fasta_file, chromosome)
-            
-            # Close the pool
-            pool.close()
-            pool.join()
+            # Determine if the sequence is short (less than window size)
+            is_short_sequence = seq_length < args.w
+
+            # Print what we're scanning now
+            if is_short_sequence:
+                print(f"Short sequence detected: {cur_record.name} length {seq_length} bp")
+                print(f"Using single window approach for the entire sequence")
+                
+                # Just process the entire sequence as one window
+                process_window(args.start, args.start, seq_length, basename, args.algorithm, 
+                            args, fasta_file, chromosome, strand)
+            else:
+                # Normal processing for longer sequences
+                print(f"Scanning {cur_record.name} from {args.start} to {end_coordinate} with window size {args.w} and step size {args.step}")
+                
+                # Create a pool of workers for multiprocessing 
+                pool = multiprocessing.Pool(cpu_count)
+                tasks = []
+                
+                
+                # Use multiprocessing for longer sequences
+                frame_step_size = step_size * cpu_count
+                for cpu_index in range(cpu_count):
+                    # Start from the specified start coordinate plus the CPU's offset
+                    frame_start = args.start + (cpu_index * step_size)
+
+                    # Start processing at each frame and jump by frame_step_size
+                    for start in range(frame_start, end_coordinate, frame_step_size):
+                        window_end = min(start + args.w, end_coordinate)
+                        window_size = window_end - start
+                        
+                        # Only process if we have a meaningful window
+                        if window_size >= args.min:
+                            tasks.append(pool.apply_async(process_window, 
+                                        (start, start, window_size, basename, args.algorithm, 
+                                        args, fasta_file, chromosome, strand)))
+                # Close the pool
+                pool.close()
+                pool.join()
 
             # Merge, sort results, and clean up temporary files
             temp_files = glob.glob(f"{basename}_*.txt")
@@ -671,6 +763,7 @@ def main():
                     except Exception as e:
                         print(f"Failed to process file {temp_file}: {str(e)}")
                 
+                
                 if all_dfs:
                     # Combine all successfully read DataFrames
                     df = pd.concat(all_dfs, ignore_index=True)
@@ -686,7 +779,7 @@ def main():
                         for col in ["i_start", "i_end", "j_start", "j_end", "eff_i_start", 
                                     "eff_i_end", "eff_j_start", "eff_j_end"]:
                             df[col] = pd.to_numeric(df[col], errors='coerce')
-                                                
+                                        
                         # Drop duplicate rows
                         df = df.drop_duplicates()
                         
@@ -697,23 +790,50 @@ def main():
                         # Sort the DataFrame by chromosome and numeric coordinates
                         df = df.sort_values(by=["Chromosome", "i_start", "i_end"])
                         
-                        df['i_eff_seq'] = df.apply(lambda row: row['i_seq'][row['eff_i_start']-1:row['eff_i_end']], axis=1)
-                        df['j_eff_seq'] = df.apply(lambda row: row['j_seq'][row['eff_j_start']-1:row['eff_j_end']], axis=1)
+                        # Safe extraction of effective sequences
+                        def safe_extract_effective_seq(row, seq_col, start_col, end_col):
+                            try:
+                                # Make sure we have integers for slicing
+                                start_idx = int(row[start_col]) - 1  # Convert to 0-based index
+                                end_idx = int(row[end_col])
+                                
+                                # Make sure indices are valid for the sequence
+                                if start_idx < 0:
+                                    start_idx = 0
+                                    
+                                seq = str(row[seq_col])
+                                if end_idx > len(seq):
+                                    end_idx = len(seq)
+                                    
+                                # Return the slice
+                                return seq[start_idx:end_idx]
+                            except (ValueError, TypeError, IndexError) as e:
+                                print(f"Warning: Could not extract effective sequence: {e}. Using full sequence instead.")
+                                return row[seq_col]
+                        
 
-                        # Add FORNA visualization links
-                        #df['structure_id'] = [f"dsRNA_{i+1}" for i in range(len(df))]
+                        # With these lines:
+                        df['i_eff_seq'] = df.apply(
+                            lambda row: safe_extract_effective_seq(row, 'i_seq', 'eff_i_start', 'eff_i_end'), 
+                            axis=1
+                        )
+                        df['j_eff_seq'] = df.apply(
+                            lambda row: safe_extract_effective_seq(row, 'j_seq', 'eff_j_start', 'eff_j_end'), 
+                            axis=1
+                        )
+
+                        # Add FORNA visualization links (with error checking)
                         df['FORNA_Link'] = (
                             "http://rna.tbi.univie.ac.at/forna/forna.html?id=url/name&sequence=" + 
-                            #df['structure_id'] + 
-                            "&sequence=" + df['i_eff_seq'] + df['j_eff_seq'] + 
-                            "&structure=" 
-                            # Need to remove "&" from the structure to avoid URL issues
-                            + df['structure'].str.replace("&", "")  
+                            df['i_eff_seq'].fillna('') + df['j_eff_seq'].fillna('') + 
+                            "&structure=" + 
+                            df['structure'].fillna('').str.replace("&", "")  
                         )
 
                         # Write out the merged results
                         df.to_csv(merged_filename, sep="\t", index=False)
                         print(f"Successfully wrote {len(df)} records to {merged_filename}")
+                
                 else:
                     print("Warning: No data could be read from any temp files")
                     # Create empty file with headers
