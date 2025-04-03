@@ -1,32 +1,35 @@
 {% set version = "0.1.0" %}
+
 package:
   name: dsrnascan
   version: {{ version }}
 
 source:
-  path: ..
+  # - url: ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz
+  #   sha256: 7184a763d39ad96bb598bfd531628a34aa53e474db9e7cac4416c2a40ab10c6e
+  # - path: .
 
 build:
-  
+  # We use build.sh for the actual commands; no 'script:' needed here.
 
 requirements:
   host:
     - python
     - pip
-    - {{ compiler('c') }}      # Uses the appropriate C compiler (clang on osx, gcc on linux)
-    - emboss
+    - {{ compiler('c') }}
+    # We don't list EMBOSS here because we are bundling from source
   run:
     - python
     - biopython
     - numpy
     - pandas
-    - ViennaRNA
-    - emboss
+    # If your script also needs ViennaRNA python bindings, add them:
+    # - ViennaRNA
 
 test:
   commands:
     - dsrnascan --help
-    - einverted --help
+    - einverted -help  # or whichever command-line option you'd like to test
 
 about:
   home: "https://github.com/Bass-Lab/dsRNAscan"

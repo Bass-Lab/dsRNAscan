@@ -526,18 +526,69 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 except (ZeroDivisionError, ValueError):
                     percent_paired = 0
                 
+                # Calculate longest continuous helix
+                longest_helix = find_longest_helix(structure)
+                
                 if match_perc < args.paired_cutoff:
                     print(f"Skipping {i_start} to {j_end} due to low percentage of pairs: {percent_paired}")
                     j += 5
                     continue
                 
-                # Writing results to the ein_results file - include strand information
-                temp_file.write(f"{chromosome}\t{strand}\t{score}\t{raw_match}\t{match_perc}\t{gap_numb}\t{i_start}\t{i_end}\t{j_start}\t{j_end}\t{eff_i[0]}\t{eff_i[1]}\t{eff_j[0]}\t{eff_j[1]}\t{i_seq}\t{j_seq}\t{structure}\t{energy}\t{percent_paired}\n")
+                # Writing results to the ein_results file - include strand information and longest_helix
+                xx(f"{chromosome}\t{strand}\t{score}\t{raw_match}\t{match_perc}\t{gap_numb}\t{i_start}\t{i_end}\t{j_start}\t{j_end}\t{eff_i[0]}\t{eff_i[1]}\t{eff_j[0]}\t{eff_j[1]}\t{i_seq}\t{j_seq}\t{structure}\t{energy}\t{percent_paired}\t{longest_helix}\n")
             except Exception as e:
                 print(f"Error processing result block at index {j}: {str(e)}")
             
             # Increment j based on the structure of your einverted output
             j += 5
+
+def find_longest_helix(structure):
+    """
+    Find the longest stretch of contiguous base pairs in an RNA structure.
+    
+    Args:
+        structure (str): String representing RNA structure (e.g., "(((...)))&(((...)))")
+        
+    Returns:
+        int: Length of the longest contiguous helix (minimum of both arms)
+    """
+    try:
+        # Handle invalid or empty structures
+        if not structure or "&" not in structure:
+            return 0
+            
+        # Split structure into both arms
+        parts = structure.split("&")
+        if len(parts) != 2:
+            return 0
+            
+        left_arm, right_arm = parts[0], parts[1]
+        
+        # Find longest stretch of opening brackets "(" in left arm
+        left_max = 0
+        current_left = 0
+        for char in left_arm:
+            if char == "(":
+                current_left += 1
+                left_max = max(left_max, current_left)
+            else:
+                current_left = 0
+                
+        # Find longest stretch of closing brackets ")" in right arm
+        right_max = 0
+        current_right = 0
+        for char in right_arm:
+            if char == ")":
+                current_right += 1
+                right_max = max(right_max, current_right)
+            else:
+                current_right = 0
+                
+        # Return the minimum of the two arms (since a helix requires both sides)
+        return min(left_max, right_max)
+    except Exception as e:
+        print(f"Error calculating longest helix: {e}")
+        return 0
             
 # Define the process_frame function
 def process_frame(frame_start, frame_step_size, end_coordinate, window_size, basename, algorithm, args, fasta_file, chromosome, pool):
@@ -641,7 +692,7 @@ def main():
 
             # Set up result files
             with open(f"{basename}.ein_results.txt", 'w+') as results_file:
-                results_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
+                results_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\tlongest_helix\n")
             
             # with open(f"{basename}.dsRNApredictions.bp", 'w+') as bp_file:
             #     # Example header - adjust based on your requirements
@@ -697,20 +748,21 @@ def main():
             merged_filename = f"{basename}_merged_results.txt"
 
             # Check if any temp files exist
+            # Update the empty file creation when no temp files exist - replace this section:
             if not temp_files:
                 print(f"Warning: No temporary files found matching pattern {basename}_*.txt")
                 # Create an empty output file with headers to avoid downstream errors
                 with open(merged_filename, 'w') as merged_file:
-                    merged_file.write("Chromosome\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\tScore\tRawMatch\tPercMatch\tGaps\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
+                    merged_file.write("Chromosome\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\tScore\tRawMatch\tPercMatch\tGaps\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\tlongest_helix\n")
             else:
                 print(f"Found {len(temp_files)} temporary files to merge")
                 
-                # Initialize an empty DataFrame with the expected columns
+                # Also update the column_names list in the merging section:
                 column_names = ["Chromosome", "Strand", "Score", "RawMatch", "PercMatch", "Gaps", 
                             "i_start", "i_end", "j_start", "j_end", "eff_i_start", "eff_i_end", 
                             "eff_j_start", "eff_j_end", "i_seq", "j_seq", "structure", 
-                            "dG(kcal/mol)", "percent_paired"]
-
+                            "dG(kcal/mol)", "percent_paired", "longest_helix"]
+                
                 all_dfs = []
                 
                 # Process each temp file individually to better handle errors
