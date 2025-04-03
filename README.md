@@ -6,41 +6,6 @@
 
 ## Installation & Running
 
-### 1. Using `python` Directly
-
-If you prefer to run `dsRNAscan.py` with Python:
-
-```bash
-# Clone the repo
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-
-# (Optional) Install requirements with pip
-pip install numpy pandas biopython viennarna
-
-# Run dsRNAscan via Python:
-python dsRNAscan.py --help
-```
-
-### 2. Making dsRNAscan.py Executable
-
-If you'd rather run dsRNAscan.py as a standalone script:
-
-```bash
-# Clone the repo
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-
-# Make the script executable
-chmod +x dsRNAscan.py
-
-# (Optional) Install dependencies
-pip install numpy pandas biopython viennarna
-
-# Execute dsRNAscan directly:
-./dsRNAscan.py --help
-```
-
 ### 3. Conda-Based Build (for Modified einverted + EMBOSS)
 
 We provide a Conda-based recipe that compiles EMBOSS (including our modified einverted.c) and installs dsRNAscan:
@@ -69,6 +34,41 @@ We provide a Conda-based recipe that compiles EMBOSS (including our modified ein
    ```
 
 ---
+
+### 2. Using `python` Directly
+
+If you prefer to run `dsRNAscan.py` with Python:
+
+```bash
+# Clone the repo
+git clone https://github.com/Bass-Lab/dsRNAscan.git
+cd dsRNAscan
+
+# (Optional) Install requirements with pip
+pip install numpy pandas biopython viennarna
+
+# Run dsRNAscan via Python:
+python dsRNAscan.py --help
+```
+
+### 3. Making dsRNAscan.py Executable
+
+If you'd rather run dsRNAscan.py as a standalone script:
+
+```bash
+# Clone the repo
+git clone https://github.com/Bass-Lab/dsRNAscan.git
+cd dsRNAscan
+
+# Make the script executable
+chmod +x dsRNAscan.py
+
+# (Optional) Install dependencies
+pip install numpy pandas biopython viennarna
+
+# Execute dsRNAscan directly:
+./dsRNAscan.py --help
+```
 
 ## Requirements
 
