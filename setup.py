@@ -5,16 +5,18 @@ import platform
 from setuptools import setup, find_packages
 from setuptools.command.install import install
 from setuptools.command.develop import develop
+from setuptools.command.build_py import build_py
 
 # Version information
 __version__ = '0.3.0'
 
-class CustomInstallCommand(install):
-    """Custom installation to handle einverted binary"""
+class CustomBuildPy(build_py):
+    """Custom build command to compile einverted during build phase"""
     def run(self):
+        # Compile einverted before building the package
         self.setup_einverted()
-        install.run(self)
-        
+        build_py.run(self)
+    
     def setup_einverted(self):
         """Set up platform-specific einverted binary with G-U wobble patch"""
         import shutil
@@ -139,12 +141,16 @@ class CustomInstallCommand(install):
                 f.write('exit 1\n')
             os.chmod(target_binary, 0o755)
 
+class CustomInstallCommand(install):
+    """Custom installation to use CustomBuildPy"""
+    def run(self):
+        install.run(self)
+
 class CustomDevelopCommand(develop):
     """Custom develop command to handle einverted binary"""
     def run(self):
-        # Use the same setup method as install
-        installer = CustomInstallCommand(self.distribution)
-        installer.setup_einverted()
+        # Use the build command to compile einverted
+        self.run_command('build_py')
         develop.run(self)
 
 # Read long description from README
@@ -208,6 +214,7 @@ setup(
         '': ['einverted.patch', 'compile_patched_einverted.sh', 'compile_minimal_einverted.c'],
     },
     cmdclass={
+        'build_py': CustomBuildPy,
         'install': CustomInstallCommand,
         'develop': CustomDevelopCommand,
     },
