@@ -49,12 +49,26 @@ class CustomInstallCommand(install):
         target_binary = os.path.join(tools_dir, 'einverted')
         
         if os.path.exists(platform_binary):
-            # Test if it has the patch by checking for G-U functionality
-            # For now, assume pre-compiled binaries are patched
-            shutil.copy2(platform_binary, target_binary)
-            os.chmod(target_binary, 0o755)
-            print(f"Using precompiled patched binary: {binary_name}")
-            return
+            # Check if it's actually a binary (not a script)
+            import stat
+            with open(platform_binary, 'rb') as f:
+                header = f.read(4)
+            # Check for binary headers (ELF, Mach-O, PE)
+            is_binary = header in [
+                b'\x7fELF',  # Linux ELF
+                b'\xcf\xfa\xed\xfe',  # macOS Mach-O 64-bit
+                b'\xce\xfa\xed\xfe',  # macOS Mach-O 32-bit
+                b'\xca\xfe\xba\xbe',  # macOS Universal binary
+                b'MZ\x90\x00',  # Windows PE
+            ]
+            
+            if is_binary:
+                shutil.copy2(platform_binary, target_binary)
+                os.chmod(target_binary, 0o755)
+                print(f"Using precompiled patched binary: {binary_name}")
+                return
+            else:
+                print(f"Found {binary_name} but it's not a valid binary, will compile from source")
                 
         # First try minimal placeholder compilation
         print("No pre-compiled binary found. Setting up einverted...")
@@ -74,62 +88,44 @@ class CustomInstallCommand(install):
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass  # gcc not available, try other methods
         
-        # Try to compile from EMBOSS source with patch (if user wants full version)
-        if os.environ.get('DSRNASCAN_COMPILE_FULL', '').lower() == 'true':
-            print("Attempting to compile full einverted with G-U wobble patch...")
+        # Try to compile from EMBOSS source with patch
+        compile_script = os.path.join(os.path.dirname(__file__), 'compile_patched_einverted.sh')
+        patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
+        
+        # Try to compile if we have the compilation script or user explicitly requests it
+        # Always try to compile during pip install to ensure G-U patch is applied
+        if os.path.exists(compile_script) and os.path.exists(patch_file):
+            print("Attempting to compile einverted with G-U wobble patch...")
             try:
-                # Create temp directory for compilation
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    os.chdir(tmpdir)
-                    
-                    # Download EMBOSS if not present
-                    emboss_url = "ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz"
-                    emboss_tar = "EMBOSS-6.6.0.tar.gz"
-                    
-                    print("Downloading EMBOSS source...")
-                    try:
-                        urllib.request.urlretrieve(emboss_url, emboss_tar)
-                    except Exception as e:
-                        print(f"WARNING: Could not download EMBOSS: {e}")
-                        raise
+                # Make script executable
+                os.chmod(compile_script, 0o755)
                 
+                # Run the compilation script
+                result = subprocess.run(
+                    ['bash', compile_script],
+                    cwd=os.path.dirname(__file__),
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    print("✓ Successfully compiled einverted with G-U wobble patch")
                     
-                    # Extract
-                    subprocess.run(['tar', '-xzf', emboss_tar], check=True)
-                    os.chdir('EMBOSS-6.6.0')
-                    
-                    # Apply patch
-                    patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
-                    if os.path.exists(patch_file):
-                        print("Applying G-U wobble patch...")
-                        subprocess.run(['patch', '-p1', '-i', patch_file], check=True)
-                    
-                    # Configure and compile
-                    print("Configuring EMBOSS (this may take a minute)...")
-                    subprocess.run(['./configure', '--without-x', '--disable-shared'], 
-                                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    print("Compiling einverted with G-U patch...")
-                    os.chdir('emboss')
-                    subprocess.run(['make', 'einverted'], 
-                                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    # Copy the compiled binary
-                    if os.path.exists('einverted'):
-                        shutil.copy2('einverted', target_binary)
+                    # Check if the binary was created
+                    if os.path.exists(target_binary):
                         os.chmod(target_binary, 0o755)
-                        
-                        # Also save as platform-specific for future use
-                        shutil.copy2('einverted', platform_binary)
-                        os.chmod(platform_binary, 0o755)
-                        
-                        print(f"✓ Successfully compiled einverted with G-U wobble patch for {system} {machine}")
-                        os.chdir(original_dir)
                         return
+                    else:
+                        print("WARNING: Compilation succeeded but binary not found")
+                else:
+                    print(f"WARNING: Compilation failed with exit code {result.returncode}")
+                    if result.stderr:
+                        print(f"Error output: {result.stderr}")
                         
             except Exception as e:
                 print(f"WARNING: Could not compile einverted with patch: {e}")
-                os.chdir(original_dir)
+                print("This may be due to missing dependencies (gcc, make, etc.)")
+                print("You can try installing EMBOSS separately or compiling manually")
             
         # Last resort: Create a placeholder binary if needed
         if not os.path.exists(target_binary):
@@ -209,6 +205,7 @@ setup(
     include_package_data=True,
     package_data={
         'dsrnascan': ['tools/*'],
+        '': ['einverted.patch', 'compile_patched_einverted.sh', 'compile_minimal_einverted.c'],
     },
     cmdclass={
         'install': CustomInstallCommand,
