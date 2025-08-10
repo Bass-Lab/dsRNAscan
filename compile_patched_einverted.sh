@@ -36,9 +36,15 @@ echo "Compiling einverted..."
 cd emboss
 make einverted
 
-# Copy to tools directory
+# Copy the ACTUAL BINARY (not the libtool wrapper) to tools directory
 echo "Installing patched einverted..."
-cp einverted ../../dsrnascan/tools/einverted
+if [ -f ".libs/einverted" ]; then
+    # The actual binary is in .libs directory
+    cp .libs/einverted ../../dsrnascan/tools/einverted
+else
+    # Fallback to the wrapper if .libs doesn't exist
+    cp einverted ../../dsrnascan/tools/einverted
+fi
 chmod +x ../../dsrnascan/tools/einverted
 
 # Also save platform-specific version
@@ -47,15 +53,31 @@ ARCH=$(uname -m)
 
 if [[ "$PLATFORM" == "darwin" ]]; then
     if [[ "$ARCH" == "arm64" ]] || [[ "$ARCH" == "aarch64" ]]; then
-        cp einverted ../../dsrnascan/tools/einverted_darwin_arm64
+        if [ -f ".libs/einverted" ]; then
+            cp .libs/einverted ../../dsrnascan/tools/einverted_darwin_arm64
+        else
+            cp einverted ../../dsrnascan/tools/einverted_darwin_arm64
+        fi
     else
-        cp einverted ../../dsrnascan/tools/einverted_darwin_x86_64
+        if [ -f ".libs/einverted" ]; then
+            cp .libs/einverted ../../dsrnascan/tools/einverted_darwin_x86_64
+        else
+            cp einverted ../../dsrnascan/tools/einverted_darwin_x86_64
+        fi
     fi
 elif [[ "$PLATFORM" == "linux" ]]; then
     if [[ "$ARCH" == "aarch64" ]]; then
-        cp einverted ../../dsrnascan/tools/einverted_linux_aarch64
+        if [ -f ".libs/einverted" ]; then
+            cp .libs/einverted ../../dsrnascan/tools/einverted_linux_aarch64
+        else
+            cp einverted ../../dsrnascan/tools/einverted_linux_aarch64
+        fi
     else
-        cp einverted ../../dsrnascan/tools/einverted_linux_x86_64
+        if [ -f ".libs/einverted" ]; then
+            cp .libs/einverted ../../dsrnascan/tools/einverted_linux_x86_64
+        else
+            cp einverted ../../dsrnascan/tools/einverted_linux_x86_64
+        fi
     fi
 fi
 

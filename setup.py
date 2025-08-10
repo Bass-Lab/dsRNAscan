@@ -72,32 +72,16 @@ class CustomBuildPy(build_py):
             else:
                 print(f"Found {binary_name} but it's not a valid binary, will compile from source")
                 
-        # First try minimal placeholder compilation
-        print("No pre-compiled binary found. Setting up einverted...")
-        
-        original_dir = os.getcwd()
-        
-        # Try to compile a minimal placeholder first
-        try:
-            minimal_c = os.path.join(os.path.dirname(__file__), 'compile_minimal_einverted.c')
-            if os.path.exists(minimal_c):
-                print("Compiling minimal einverted placeholder...")
-                subprocess.run(['gcc', '-o', target_binary, minimal_c], 
-                             check=True, stderr=subprocess.DEVNULL)
-                os.chmod(target_binary, 0o755)
-                print("✓ Installed einverted placeholder. For full functionality, install EMBOSS.")
-                return
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass  # gcc not available, try other methods
+        # No pre-compiled binary found, must compile from source
+        print("No pre-compiled binary found. Compiling einverted with G-U patch...")
         
         # Try to compile from EMBOSS source with patch
         compile_script = os.path.join(os.path.dirname(__file__), 'compile_patched_einverted.sh')
         patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
         
-        # Try to compile if we have the compilation script or user explicitly requests it
-        # Always try to compile during pip install to ensure G-U patch is applied
+        # Always try to compile with the G-U patch
         if os.path.exists(compile_script) and os.path.exists(patch_file):
-            print("Attempting to compile einverted with G-U wobble patch...")
+            print("Compiling einverted with G-U wobble patch...")
             try:
                 # Make script executable
                 os.chmod(compile_script, 0o755)
@@ -118,28 +102,30 @@ class CustomBuildPy(build_py):
                         os.chmod(target_binary, 0o755)
                         return
                     else:
-                        print("WARNING: Compilation succeeded but binary not found")
+                        raise RuntimeError("Compilation succeeded but binary not found at " + target_binary)
                 else:
-                    print(f"WARNING: Compilation failed with exit code {result.returncode}")
+                    error_msg = f"Compilation failed with exit code {result.returncode}"
                     if result.stderr:
-                        print(f"Error output: {result.stderr}")
+                        error_msg += f"\nError output: {result.stderr}"
+                    if result.stdout:
+                        error_msg += f"\nOutput: {result.stdout}"
+                    raise RuntimeError(error_msg)
                         
             except Exception as e:
-                print(f"WARNING: Could not compile einverted with patch: {e}")
-                print("This may be due to missing dependencies (gcc, make, etc.)")
-                print("You can try installing EMBOSS separately or compiling manually")
-            
-        # Last resort: Create a placeholder binary if needed
-        if not os.path.exists(target_binary):
-            print("WARNING: Creating placeholder einverted binary")
-            print("Note: einverted will need to be installed separately for full functionality")
-            # Create a simple script that explains the issue
-            with open(target_binary, 'w') as f:
-                f.write("#!/bin/sh\n")
-                f.write('echo "Error: einverted binary not properly installed."\n')
-                f.write('echo "Please install EMBOSS or use conda: conda install -c bioconda emboss"\n')
-                f.write('exit 1\n')
-            os.chmod(target_binary, 0o755)
+                print(f"ERROR: Could not compile einverted with G-U patch: {e}")
+                print("\n" + "="*60)
+                print("IMPORTANT: dsRNAscan requires einverted with G-U wobble patch")
+                print("Please ensure you have the following installed:")
+                print("  - gcc/clang compiler")
+                print("  - make")
+                print("  - patch")
+                print("  - wget or curl")
+                print("\nOr manually compile by running:")
+                print("  ./compile_patched_einverted.sh")
+                print("="*60 + "\n")
+                raise RuntimeError(f"Failed to compile einverted with G-U patch: {e}")
+        else:
+            raise RuntimeError(f"Missing required files for compilation: compile_script={compile_script}, patch={patch_file}")
 
 class CustomInstallCommand(install):
     """Custom installation to use CustomBuildPy"""
