@@ -1,0 +1,14 @@
+include README.md
+include LICENSE
+include einverted.patch
+include einverted.c
+include requirements.txt
+recursive-include tools *
+recursive-include conda-recipe *
+exclude test_sequence.fa
+exclude *.dsRNApredictions.bp
+exclude *_merged_results.txt
+exclude *_ein_results.txt
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store

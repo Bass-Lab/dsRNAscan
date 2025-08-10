@@ -6,11 +6,11 @@
 
 ## Installation & Running
 
-### 3. Conda-Based Build (for Modified einverted + EMBOSS)
+### 1. Conda-Based Build (for Modified einverted + EMBOSS)
 
 We provide a Conda-based recipe that compiles EMBOSS (including our modified einverted.c) and installs dsRNAscan:
 
-1. Install conda-build:
+1. Install :
    ```bash
    conda install -c conda-forge conda-build
    ```
@@ -93,8 +93,10 @@ pip install numpy pandas biopython viennarna
 ### Basic Command-Line Usage:
 
 ```bash
-./dsRNAscan.py --input <input_fasta_file> --chr <chromosome_name> [other flags...]
+./dsRNAscan.py <input_fasta_file> --chr <chromosome_name> [other flags...]
 ```
+
+**Note:** Input files can be compressed (.gz) or uncompressed FASTA format.
 
 ### Key Parameters:
 
@@ -124,21 +126,62 @@ pip install numpy pandas biopython viennarna
 
 ## Output
 
-1. **Results File** (`<basename>_ein_results.txt`)
+1. **Results File** (`<basename>_merged_results.txt`)
    
-   Fields include:
-   - Chromosome, Strand, Score, RawMatch, PercMatch, Gaps
-   - i_start, i_end, j_start, j_end
-   - i_seq, j_seq
-   - structure (dot-bracket)
-   - dG(kcal/mol)
-   - percent_paired
-   - link to FORNA visualiztion 
-   - longest_helix length
+   Tab-delimited file with the following columns:
+   - **Chromosome**: Chromosome/sequence name
+   - **Strand**: + (forward) or - (reverse)
+   - **Score**: Einverted alignment score
+   - **RawMatch**: Number of matching base pairs
+   - **PercMatch**: Percentage of matching base pairs
+   - **Gaps**: Number of gaps in alignment
+   - **i_start, i_end**: Start and end positions of the first arm
+   - **j_start, j_end**: Start and end positions of the second arm
+   - **eff_i_start, eff_i_end**: Effective coordinates of first arm after RNAduplex
+   - **eff_j_start, eff_j_end**: Effective coordinates of second arm after RNAduplex
+   - **i_seq, j_seq**: Sequences of both arms
+   - **structure**: RNA secondary structure in dot-bracket notation
+   - **dG(kcal/mol)**: Free energy of the structure
+   - **percent_paired**: Percentage of bases that are paired
+   - **longest_helix**: Length of the longest continuous helix
+   - **i_eff_seq, j_eff_seq**: Effective sequences after RNAduplex adjustment
+   - **FORNA_Link**: URL for FORNA visualization
+   - **orig_arm_length**: Original arm length from einverted (v0.3.0+)
+   - **eff_arm_length**: Effective arm length after RNAduplex refinement (v0.3.0+)
 
 2. **BP File** (`<basename>.dsRNApredictions.bp`)
    
-   A tab-delimited file describing base pairs in a format suitable for IGV or other genome browsers.
+   Tab-delimited file for IGV visualization with:
+   - Color definitions for different pairing percentages
+   - Base pair coordinates in IGV-compatible format
+
+---
+
+## Genome-Wide Scanning
+
+### Quick Start for Large Genomes
+
+For scanning compressed genome files:
+```bash
+# No need to decompress - dsRNAscan now supports .gz files directly!
+# Fast initial scan
+dsrnascan genome.fa.gz --chr chr1 -w 20000 -s 10000 --min 100 -c 8
+
+# Detailed scan of specific region
+dsrnascan genome.fa --chr chr1 --start 1000000 --end 2000000 -w 10000 -s 2000
+```
+
+### Parallel Processing
+```bash
+# Process multiple chromosomes in parallel
+parallel -j 4 'dsrnascan chr{}.fa --chr chr{} -w 10000 -s 5000' ::: {1..22} X Y
+```
+
+### Performance Tips
+- Use larger windows (`-w 20000`) and steps (`-s 10000`) for initial screening
+- Increase `--score` threshold to reduce false positives in repetitive regions
+- Process chromosomes separately to manage memory usage
+- See `GENOME_SCANNING_GUIDE.md` for detailed strategies
 
 ---
 
@@ -166,7 +209,7 @@ We welcome pull requests! Please ensure your code is well-documented and tested.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the GPL License.
 
 ---
 

@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsrnascan"
+version = "0.2.0"
+description = "A tool for genome-wide prediction of double-stranded RNA structures"
+readme = "README.md"
+authors = [
+    {name = "Bass Lab"},
+]
+license = {text = "GPL-3.0-or-later"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+]
+keywords = ["bioinformatics", "RNA", "dsRNA", "secondary structure", "genomics"]
+requires-python = ">=3.7"
+dependencies = [
+    "biopython>=1.78",
+    "numpy>=1.19",
+    "pandas>=1.1",
+    "ViennaRNA>=2.4",
+]
+
+[project.optional-dependencies]
+mpi = ["mpi4py>=3.0", "parasail>=1.2"]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=22.0",
+    "flake8>=4.0",
+    "mypy>=0.900",
+]
+
+[project.scripts]
+dsrnascan = "dsRNAscan:main"
+# dsrnascan-mpi = "dsRNAscan_mpi:main"  # Uncomment when module is renamed
+
+[project.urls]
+Homepage = "https://github.com/Bass-Lab/dsRNAscan"
+Documentation = "https://github.com/Bass-Lab/dsRNAscan/blob/main/README.md"
+Repository = "https://github.com/Bass-Lab/dsRNAscan"
+"Bug Tracker" = "https://github.com/Bass-Lab/dsRNAscan/issues"
+
+[tool.setuptools]
+py-modules = ["dsRNAscan", "dsRNAscan-mpi"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["tools/*", "*.patch", "*.c"]
+
+[tool.black]
+line-length = 100
+target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
