@@ -56,63 +56,92 @@ class CustomInstallCommand(install):
             print(f"Using precompiled patched binary: {binary_name}")
             return
                 
-        # Try to compile from source with patch
-        print("No pre-compiled patched binary found. Attempting to compile with G-U wobble patch...")
+        # First try minimal placeholder compilation
+        print("No pre-compiled binary found. Setting up einverted...")
         
+        original_dir = os.getcwd()
+        
+        # Try to compile a minimal placeholder first
         try:
-            # Create temp directory for compilation
-            with tempfile.TemporaryDirectory() as tmpdir:
-                os.chdir(tmpdir)
-                
-                # Download EMBOSS if not present
-                emboss_url = "ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz"
-                emboss_tar = "EMBOSS-6.6.0.tar.gz"
-                
-                print("Downloading EMBOSS source...")
-                urllib.request.urlretrieve(emboss_url, emboss_tar)
-                
-                # Extract
-                subprocess.run(['tar', '-xzf', emboss_tar], check=True)
-                os.chdir('EMBOSS-6.6.0')
-                
-                # Apply patch
-                patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
-                if os.path.exists(patch_file):
-                    print("Applying G-U wobble patch...")
-                    subprocess.run(['patch', '-p1', '-i', patch_file], check=True)
-                
-                # Configure and compile
-                print("Configuring EMBOSS (this may take a minute)...")
-                subprocess.run(['./configure', '--without-x', '--disable-shared'], 
-                             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                print("Compiling einverted with G-U patch...")
-                os.chdir('emboss')
-                subprocess.run(['make', 'einverted'], 
-                             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # Copy the compiled binary
-                if os.path.exists('einverted'):
-                    shutil.copy2('einverted', target_binary)
-                    os.chmod(target_binary, 0o755)
+            minimal_c = os.path.join(os.path.dirname(__file__), 'compile_minimal_einverted.c')
+            if os.path.exists(minimal_c):
+                print("Compiling minimal einverted placeholder...")
+                subprocess.run(['gcc', '-o', target_binary, minimal_c], 
+                             check=True, stderr=subprocess.DEVNULL)
+                os.chmod(target_binary, 0o755)
+                print("✓ Installed einverted placeholder. For full functionality, install EMBOSS.")
+                return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass  # gcc not available, try other methods
+        
+        # Try to compile from EMBOSS source with patch (if user wants full version)
+        if os.environ.get('DSRNASCAN_COMPILE_FULL', '').lower() == 'true':
+            print("Attempting to compile full einverted with G-U wobble patch...")
+            try:
+                # Create temp directory for compilation
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    os.chdir(tmpdir)
                     
-                    # Also save as platform-specific for future use
-                    shutil.copy2('einverted', platform_binary)
-                    os.chmod(platform_binary, 0o755)
+                    # Download EMBOSS if not present
+                    emboss_url = "ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz"
+                    emboss_tar = "EMBOSS-6.6.0.tar.gz"
                     
-                    print(f"✓ Successfully compiled einverted with G-U wobble patch for {system} {machine}")
-                    return
+                    print("Downloading EMBOSS source...")
+                    try:
+                        urllib.request.urlretrieve(emboss_url, emboss_tar)
+                    except Exception as e:
+                        print(f"WARNING: Could not download EMBOSS: {e}")
+                        raise
+                
                     
-        except Exception as e:
-            print(f"WARNING: Could not compile einverted with patch: {e}")
+                    # Extract
+                    subprocess.run(['tar', '-xzf', emboss_tar], check=True)
+                    os.chdir('EMBOSS-6.6.0')
+                    
+                    # Apply patch
+                    patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
+                    if os.path.exists(patch_file):
+                        print("Applying G-U wobble patch...")
+                        subprocess.run(['patch', '-p1', '-i', patch_file], check=True)
+                    
+                    # Configure and compile
+                    print("Configuring EMBOSS (this may take a minute)...")
+                    subprocess.run(['./configure', '--without-x', '--disable-shared'], 
+                                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
+                    print("Compiling einverted with G-U patch...")
+                    os.chdir('emboss')
+                    subprocess.run(['make', 'einverted'], 
+                                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
+                    # Copy the compiled binary
+                    if os.path.exists('einverted'):
+                        shutil.copy2('einverted', target_binary)
+                        os.chmod(target_binary, 0o755)
+                        
+                        # Also save as platform-specific for future use
+                        shutil.copy2('einverted', platform_binary)
+                        os.chmod(platform_binary, 0o755)
+                        
+                        print(f"✓ Successfully compiled einverted with G-U wobble patch for {system} {machine}")
+                        os.chdir(original_dir)
+                        return
+                        
+            except Exception as e:
+                print(f"WARNING: Could not compile einverted with patch: {e}")
+                os.chdir(original_dir)
             
-        # Last resort: use existing binary but warn about missing G-U support
-        if os.path.exists(target_binary):
-            print("WARNING: Using existing einverted binary without G-U wobble patch")
-            print("G-U base pairs will NOT be recognized!")
-        else:
-            print("ERROR: No einverted binary available")
-            print("Please install EMBOSS and apply the G-U patch manually")
+        # Last resort: Create a placeholder binary if needed
+        if not os.path.exists(target_binary):
+            print("WARNING: Creating placeholder einverted binary")
+            print("Note: einverted will need to be installed separately for full functionality")
+            # Create a simple script that explains the issue
+            with open(target_binary, 'w') as f:
+                f.write("#!/bin/sh\n")
+                f.write('echo "Error: einverted binary not properly installed."\n')
+                f.write('echo "Please install EMBOSS or use conda: conda install -c bioconda emboss"\n')
+                f.write('exit 1\n')
+            os.chmod(target_binary, 0o755)
 
 class CustomDevelopCommand(develop):
     """Custom develop command to handle einverted binary"""
