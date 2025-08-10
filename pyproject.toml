@@ -45,8 +45,8 @@ dev = [
 ]
 
 [project.scripts]
-dsrnascan = "dsRNAscan:main"
-# dsrnascan-mpi = "dsRNAscan_mpi:main"  # Uncomment when module is renamed
+dsrnascan = "dsrnascan:main"
+# dsrnascan-mpi = "dsrnascan_mpi:main"  # Uncomment when module is renamed
 
 [project.urls]
 Homepage = "https://github.com/Bass-Lab/dsRNAscan"
