@@ -1,5 +1,9 @@
 # dsRNAscan
 
+[![CI](https://github.com/Bass-Lab/dsRNAscan/actions/workflows/ci.yml/badge.svg)](https://github.com/Bass-Lab/dsRNAscan/actions/workflows/ci.yml)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 **dsRNAscan** is a bioinformatics tool designed to identify and characterize **double-stranded RNAs (dsRNAs)** encoded by genomic sequences. This package also bundles a modified version of **einverted** from the EMBOSS suite for detecting inverted repeats that may form dsRNA structures.
 
 ---

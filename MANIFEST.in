@@ -3,6 +3,7 @@ include LICENSE
 include einverted.patch
 include einverted.c
 include requirements.txt
+recursive-include dsrnascan/tools *
 recursive-include tools *
 recursive-include conda-recipe *
 exclude test_sequence.fa

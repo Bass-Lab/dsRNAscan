@@ -16,8 +16,13 @@ class CustomInstallCommand(install):
         install.run(self)
         
     def setup_einverted(self):
-        """Set up platform-specific einverted binary"""
-        tools_dir = os.path.join(os.path.dirname(__file__), 'tools')
+        """Set up platform-specific einverted binary with G-U wobble patch"""
+        import shutil
+        import tempfile
+        import urllib.request
+        
+        tools_dir = os.path.join(os.path.dirname(__file__), 'dsrnascan', 'tools')
+        os.makedirs(tools_dir, exist_ok=True)
         
         # Detect platform
         system = platform.system().lower()
@@ -37,30 +42,77 @@ class CustomInstallCommand(install):
         elif system == 'windows':
             binary_name = 'einverted_windows_x86_64.exe'
         else:
-            binary_name = None
+            binary_name = 'einverted'
             
-        # Check for platform-specific binary
-        if binary_name:
-            platform_binary = os.path.join(tools_dir, binary_name)
-            target_binary = os.path.join(tools_dir, 'einverted')
-            
-            if os.path.exists(platform_binary):
-                # Copy platform-specific binary to einverted
-                import shutil
-                shutil.copy2(platform_binary, target_binary)
-                os.chmod(target_binary, 0o755)
-                print(f"Using precompiled binary: {binary_name}")
-                return
+        # First check if we have a pre-compiled patched binary
+        platform_binary = os.path.join(tools_dir, binary_name)
+        target_binary = os.path.join(tools_dir, 'einverted')
+        
+        if os.path.exists(platform_binary):
+            # Test if it has the patch by checking for G-U functionality
+            # For now, assume pre-compiled binaries are patched
+            shutil.copy2(platform_binary, target_binary)
+            os.chmod(target_binary, 0o755)
+            print(f"Using precompiled patched binary: {binary_name}")
+            return
                 
-        # Fallback: check if generic einverted exists
-        einverted_path = os.path.join(tools_dir, 'einverted')
-        if os.path.exists(einverted_path):
-            print(f"Using existing einverted binary")
-            os.chmod(einverted_path, 0o755)
+        # Try to compile from source with patch
+        print("No pre-compiled patched binary found. Attempting to compile with G-U wobble patch...")
+        
+        try:
+            # Create temp directory for compilation
+            with tempfile.TemporaryDirectory() as tmpdir:
+                os.chdir(tmpdir)
+                
+                # Download EMBOSS if not present
+                emboss_url = "ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz"
+                emboss_tar = "EMBOSS-6.6.0.tar.gz"
+                
+                print("Downloading EMBOSS source...")
+                urllib.request.urlretrieve(emboss_url, emboss_tar)
+                
+                # Extract
+                subprocess.run(['tar', '-xzf', emboss_tar], check=True)
+                os.chdir('EMBOSS-6.6.0')
+                
+                # Apply patch
+                patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
+                if os.path.exists(patch_file):
+                    print("Applying G-U wobble patch...")
+                    subprocess.run(['patch', '-p1', '-i', patch_file], check=True)
+                
+                # Configure and compile
+                print("Configuring EMBOSS (this may take a minute)...")
+                subprocess.run(['./configure', '--without-x', '--disable-shared'], 
+                             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                print("Compiling einverted with G-U patch...")
+                os.chdir('emboss')
+                subprocess.run(['make', 'einverted'], 
+                             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Copy the compiled binary
+                if os.path.exists('einverted'):
+                    shutil.copy2('einverted', target_binary)
+                    os.chmod(target_binary, 0o755)
+                    
+                    # Also save as platform-specific for future use
+                    shutil.copy2('einverted', platform_binary)
+                    os.chmod(platform_binary, 0o755)
+                    
+                    print(f"✓ Successfully compiled einverted with G-U wobble patch for {system} {machine}")
+                    return
+                    
+        except Exception as e:
+            print(f"WARNING: Could not compile einverted with patch: {e}")
+            
+        # Last resort: use existing binary but warn about missing G-U support
+        if os.path.exists(target_binary):
+            print("WARNING: Using existing einverted binary without G-U wobble patch")
+            print("G-U base pairs will NOT be recognized!")
         else:
-            print("Warning: No suitable einverted binary found for your platform")
-            print(f"Platform: {system} {machine}")
-            print("Please compile einverted from source or use conda installation")
+            print("ERROR: No einverted binary available")
+            print("Please install EMBOSS and apply the G-U patch manually")
 
 class CustomDevelopCommand(develop):
     """Custom develop command to handle einverted binary"""
@@ -88,8 +140,7 @@ setup(
         "Documentation": "https://github.com/Bass-Lab/dsRNAscan/blob/main/README.md",
         "Source Code": "https://github.com/Bass-Lab/dsRNAscan",
     },
-    py_modules=['dsRNAscan', 'dsRNAscan-mpi'],
-    packages=find_packages(),
+    packages=['dsrnascan'],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Science/Research",
@@ -123,13 +174,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'dsrnascan=dsRNAscan:main',
-            # 'dsrnascan-mpi=dsRNAscan_mpi:main',  # Uncomment when module is renamed
+            'dsrnascan=dsrnascan:main',
         ],
     },
     include_package_data=True,
     package_data={
-        '': ['tools/einverted', 'einverted.patch', 'einverted.c'],
+        'dsrnascan': ['tools/*'],
     },
     cmdclass={
         'install': CustomInstallCommand,

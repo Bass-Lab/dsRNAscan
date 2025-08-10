@@ -55,7 +55,7 @@ Repository = "https://github.com/Bass-Lab/dsRNAscan"
 "Bug Tracker" = "https://github.com/Bass-Lab/dsRNAscan/issues"
 
 [tool.setuptools]
-py-modules = ["dsRNAscan", "dsRNAscan-mpi"]
+py-modules = ["dsRNAscan"]
 include-package-data = true
 
 [tool.setuptools.package-data]
