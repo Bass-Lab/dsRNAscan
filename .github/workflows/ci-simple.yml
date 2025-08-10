@@ -111,4 +111,4 @@ jobs:
     - name: Test installation
       run: |
         dsrnascan --help
-        python -c "import dsRNAscan; print('Import successful')"
+        python -c "import dsrnascan; print('Import successful')"
