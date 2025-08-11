@@ -9,7 +9,10 @@ def find_dsrna_data():
     
     # Possible locations relative to overlap_analyzer directory
     possible_paths = [
-        # In overlap_analyzer/data
+        # Minimal parquet in data directory (primary)
+        Path(__file__).parent / "data" / "dsrna_predictions_minimal.parquet",
+        
+        # Full parquet if available
         Path(__file__).parent / "data" / "dsrna_predictions.parquet",
         
         # In parent dsRNAscan output

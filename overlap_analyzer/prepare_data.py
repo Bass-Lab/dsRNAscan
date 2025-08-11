@@ -56,10 +56,10 @@ def create_subsets(input_file, output_dir="data"):
         'conserved': {
             'description': 'Conserved dsRNAs (PhastCons > 0.5)',
             'filter': lambda df: (
-                (df['PhastCons17_Ave_i'] > 0.5) & 
-                (df['PhastCons17_Ave_j'] > 0.5) &
-                (df['PhastCons100_Ave_i'] > 0.5) & 
-                (df['PhastCons100_Ave_j'] > 0.5)
+                (df['i_phast17'] > 0.5) & 
+                (df['j_phast17'] > 0.5) &
+                (df['i_phast100'] > 0.5) & 
+                (df['j_phast100'] > 0.5)
             )
         },
         'ml_structure': {
@@ -77,20 +77,20 @@ def create_subsets(input_file, output_dir="data"):
         'conserved_high_conf': {
             'description': 'Conserved + ML structure model',
             'filter': lambda df: (
-                (df['PhastCons17_Ave_i'] > 0.5) & 
-                (df['PhastCons17_Ave_j'] > 0.5) &
-                (df['PhastCons100_Ave_i'] > 0.5) & 
-                (df['PhastCons100_Ave_j'] > 0.5) &
+                (df['i_phast17'] > 0.5) & 
+                (df['j_phast17'] > 0.5) &
+                (df['i_phast100'] > 0.5) & 
+                (df['j_phast100'] > 0.5) &
                 (df['pred_prob_editing_structure_only_alu100pct'] > 0.247)
             )
         },
         'alu': {
             'description': 'Alu-derived dsRNAs',
-            'filter': lambda df: df['Alu'] == 'Alu'
+            'filter': lambda df: df['alu'] == 'Alu'
         },
         'nonalu': {
             'description': 'Non-Alu dsRNAs',
-            'filter': lambda df: df['Alu'] == 'Non-Alu'
+            'filter': lambda df: df['alu'] == 'Non-Alu'
         }
     }
     
@@ -112,17 +112,21 @@ def create_subsets(input_file, output_dir="data"):
         subset_df.to_parquet(parquet_file, compression='snappy')
         print(f"  - Saved to {parquet_file}")
         
-        # Also create BED file for faster loading
-        bed_file = output_dir / f"{subset_name}_dsrnas.bed"
-        create_bed_file(subset_df, bed_file)
-        print(f"  - Created BED: {bed_file}")
+        # Skip BED file creation for large subsets (>100k rows)
+        if len(subset_df) < 100000:
+            bed_file = output_dir / f"{subset_name}_dsrnas.bed"
+            create_bed_file(subset_df, bed_file)
+            print(f"  - Created BED: {bed_file}")
+        else:
+            bed_file = None
+            print(f"  - Skipped BED creation (too large: {len(subset_df):,} rows)")
         
         subset_info.append({
             'name': subset_name,
             'description': subset_config['description'],
             'count': len(subset_df),
             'parquet': str(parquet_file),
-            'bed': str(bed_file)
+            'bed': str(bed_file) if bed_file else 'N/A (too large)'
         })
     
     # Create a sample subset for testing
@@ -146,11 +150,8 @@ def create_subsets(input_file, output_dir="data"):
     
     print(f"\nSubset information saved to: {info_file}")
     
-    # Create all_dsrnas BED for the full dataset
-    print("\nCreating full dataset BED file...")
-    all_bed = output_dir / "all_dsrnas.bed"
-    create_bed_file(df, all_bed)
-    print(f"  - Full dataset BED: {all_bed}")
+    # Skip creating BED for full dataset (too large)
+    print("\nSkipping full dataset BED file (5M+ rows - use parquet instead)")
     
     return subset_info
 
@@ -158,13 +159,16 @@ def create_bed_file(df, output_file):
     """Create BED file from dsRNA dataframe"""
     with open(output_file, 'w') as f:
         for idx, row in tqdm(df.iterrows(), total=len(df), desc="Writing BED"):
+            # Get strand, use '.' if not available
+            strand = row['er_strand'] if 'er_strand' in row and pd.notna(row['er_strand']) else '.'
+            
             # Write i-arm
             f.write(f"{row['er_chr']}\t{row['er_i_start']}\t{row['er_i_end']}\t")
-            f.write(f"dsRNA_i_{idx}\t1000\t{row.get('er_strand', '.')}\n")
+            f.write(f"dsRNA_i_{idx}\t1000\t{strand}\n")
             
             # Write j-arm
             f.write(f"{row['er_chr']}\t{row['er_j_start']}\t{row['er_j_end']}\t")
-            f.write(f"dsRNA_j_{idx}\t1000\t{row.get('er_strand', '.')}\n")
+            f.write(f"dsRNA_j_{idx}\t1000\t{strand}\n")
 
 def main():
     parser = argparse.ArgumentParser(

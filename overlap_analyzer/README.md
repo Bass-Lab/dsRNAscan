@@ -12,6 +12,9 @@ This tool analyzes whether your genomic features (e.g., RNA-binding protein site
 # Install dependencies
 pip install -r requirements.txt
 
+# Ensure you have the data (if cloned from GitHub)
+git lfs pull  # Downloads 211MB dsRNA dataset
+
 # Run with example data
 python dsrna_overlap_analyzer.py examples/microexons_30bp.bed
 
@@ -24,43 +27,42 @@ python dsrna_overlap_analyzer.py your_features.bed --subset conserved_high_conf
 ```bash
 cd overlap_analyzer
 pip install -r requirements.txt
+
+# If cloning from GitHub, ensure you have the data file:
+git lfs pull  # Downloads the 211MB dsRNA dataset
 ```
 
 Requirements:
 - Python 3.7+
 - pandas, numpy, pybedtools, tqdm
 - pyarrow (for parquet file support)
+- Git LFS (for downloading the included dataset from GitHub)
 
 ## Data Setup
 
-### Option 1: Quick Start with Local Data
-If you have the dsRNA predictions parquet file:
-```bash
-# Prepare subset files for faster analysis
-python prepare_data.py --input /path/to/dsrna_predictions.parquet
+### Data Included!
+This repository includes a minimal dsRNA dataset (211MB) with 5.1M dsRNA predictions from the paper. The data is automatically available - no download needed!
 
-# This creates optimized subset files in data/ directory
-```
+The `data/` directory contains:
+- `dsrna_predictions_minimal.parquet` - Full dataset with essential columns only
+- Pre-computed subset files for common analyses:
+  - `conserved_dsrnas.parquet` (10,706 dsRNAs)
+  - `conserved_high_conf_dsrnas.parquet` (418 high-confidence dsRNAs)
+  - `ml_structure_dsrnas.parquet` (2.1M ML-predicted dsRNAs)
+  - And more subsets (see `data/subset_info.txt`)
 
-### Option 2: Download Data
+### Using Your Own Data
+To use custom dsRNA predictions from dsRNAscan:
 ```bash
-# Get download instructions
-./download_data.sh
-# or
-python prepare_data.py --download
-```
-
-### Option 3: Use dsRNAscan Output Directly
-```bash
-# The analyzer can use dsRNAscan output directly
 python dsrna_overlap_analyzer.py features.bed \
-    --dsrna-file ../dsrnascan_output/predictions.parquet
+    --dsrna-file ../your_predictions.parquet
 ```
 
-After data preparation, the `data/` directory will contain:
-- Pre-filtered subset files (BED and parquet formats)
-- `subset_info.txt` with subset statistics
-- Sample data for testing
+### Regenerating Subsets
+To recreate subset files or use different thresholds:
+```bash
+python prepare_data.py --input data/dsrna_predictions_minimal.parquet
+```
 
 ## Usage
 
@@ -218,6 +220,12 @@ python dsrna_overlap_analyzer.py my_features.bed \
 4. **Accuracy**: Increase permutations for publication (--permutations 1000+)
 
 ## Troubleshooting
+
+### "No dsRNA data file found" or data file is very small (< 1KB)
+- You may have a Git LFS pointer file instead of the actual data
+- Run `git lfs pull` to download the actual dataset
+- Check file size: `ls -lh data/dsrna_predictions_minimal.parquet` (should be ~211MB)
+- If still issues, manually download from the repository's releases page
 
 ### "No dsRNA data file found"
 - Check file paths and permissions
