@@ -72,21 +72,41 @@ class CustomBuildPy(build_py):
             else:
                 print(f"Found {binary_name} but it's not a valid binary, will compile from source")
                 
-        # No pre-compiled binary found, must compile from source
-        print(f"No pre-compiled binary found for {system} {machine}")
-        print("Will compile einverted from source with G-U wobble patch...")
+        # No pre-compiled binary found
+        print(f"WARNING: No pre-compiled einverted binary found for {system} {machine}")
+        print("The package will install, but einverted compilation may be needed.")
         
         # Try to compile from EMBOSS source with patch
         # Use absolute path resolution that works in sdist builds
         setup_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Also check if einverted.c exists as another indicator we're in the right place
-        einverted_c = os.path.join(setup_dir, 'einverted.c')
-        compile_script = os.path.join(setup_dir, 'compile_patched_einverted.sh')
-        patch_file = os.path.join(setup_dir, 'einverted.patch')
+        # Try multiple possible locations for the files
+        possible_dirs = [
+            setup_dir,
+            os.getcwd(),
+            os.path.join(os.getcwd(), 'dsrnascan'),
+            os.path.dirname(setup_dir),
+        ]
         
-        # Always try to compile with the G-U patch
-        if os.path.exists(compile_script) and os.path.exists(patch_file):
+        compile_script = None
+        patch_file = None
+        
+        for dir_path in possible_dirs:
+            test_script = os.path.join(dir_path, 'compile_patched_einverted.sh')
+            test_patch = os.path.join(dir_path, 'einverted.patch')
+            if os.path.exists(test_script) and os.path.exists(test_patch):
+                compile_script = test_script
+                patch_file = test_patch
+                setup_dir = dir_path
+                break
+        
+        if not compile_script:
+            # Use default paths for error reporting
+            compile_script = os.path.join(setup_dir, 'compile_patched_einverted.sh')
+            patch_file = os.path.join(setup_dir, 'einverted.patch')
+        
+        # Try to compile if we're in a development environment (not a pip install)
+        if os.path.exists(compile_script) and os.path.exists(patch_file) and os.environ.get('DSRNASCAN_COMPILE', 'false').lower() == 'true':
             print(f"Found compilation files:")
             print(f"  Script: {compile_script}")
             print(f"  Patch: {patch_file}")
@@ -140,13 +160,19 @@ class CustomBuildPy(build_py):
                 print("="*60 + "\n")
                 raise RuntimeError(f"Failed to compile einverted with G-U patch: {e}")
         else:
-            print(f"ERROR: Required compilation files not found!")
-            print(f"  Looking for script at: {compile_script} (exists: {os.path.exists(compile_script)})")
-            print(f"  Looking for patch at: {patch_file} (exists: {os.path.exists(patch_file)})")
-            print(f"  Current directory: {os.getcwd()}")
-            print(f"  Setup directory: {setup_dir}")
-            print(f"  Directory contents: {os.listdir(setup_dir) if os.path.exists(setup_dir) else 'Directory not found'}")
-            raise RuntimeError(f"Missing required files for compilation")
+            # Don't fail the build, just warn
+            print(f"INFO: einverted will need to be compiled after installation")
+            print(f"  Run: python -m dsrnascan.compile_einverted")
+            print(f"  Or set DSRNASCAN_COMPILE=true during installation to compile automatically")
+            
+            # Create a placeholder script if no binary exists
+            if not os.path.exists(target_binary):
+                with open(target_binary, 'w') as f:
+                    f.write('#!/bin/sh\n')
+                    f.write('echo "ERROR: einverted binary not compiled yet."\n')
+                    f.write('echo "Please run: python -m dsrnascan.compile_einverted"\n')
+                    f.write('exit 1\n')
+                os.chmod(target_binary, 0o755)
 
 class CustomInstallCommand(install):
     """Custom installation to use CustomBuildPy"""
