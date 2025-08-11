@@ -49,8 +49,21 @@ jobs:
     - name: Build package
       run: python -m build
     
-    - name: Install package
+    - name: Install package (Unix)
+      if: runner.os != 'Windows'
       run: pip install dist/*.whl
+    
+    - name: Install package (Windows)
+      if: runner.os == 'Windows'
+      shell: python
+      run: |
+        import glob
+        import subprocess
+        wheels = glob.glob('dist/*.whl')
+        if wheels:
+            subprocess.run(['pip', 'install', wheels[0]], check=True)
+        else:
+            raise FileNotFoundError("No wheel file found in dist/")
     
     - name: Test CLI
       run: |
