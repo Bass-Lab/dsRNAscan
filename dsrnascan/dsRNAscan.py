@@ -34,9 +34,9 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Try multiple locations for einverted binary
 possible_paths = [
-    os.path.join(script_dir, "tools", "einverted"),  # Package location (when installed)
-    os.path.join(script_dir, "..", "tools", "einverted"),  # Development location
-    os.path.join(os.path.dirname(script_dir), "tools", "einverted"),  # Alternative location
+    os.path.join(script_dir, "tools", "einverted"),  # Development location
+    os.path.join(script_dir, "..", "tools", "einverted"),  # Installed location
+    os.path.join(os.path.dirname(script_dir), "tools", "einverted"),  # Alternative installed
     "/usr/local/bin/einverted",  # System installation
     "/usr/bin/einverted",  # System installation
 ]
@@ -258,183 +258,55 @@ def generate_bp_file(input_file, output_file):
         print(f"Error generating BP file: {str(e)}")
         import traceback
         traceback.print_exc()
-
-# UNUSED FUNCTION - Commented out to avoid confusion
-# This function was replaced by inline merging logic in the main() function
-# def fix_merge_temp_files(basename):
-#     """
-#     Fix the merging of temporary files into a single output file.
-#     
-#     Args:
-#         basename (str): Base name for the temporary files pattern
-#     
-#     Returns:
-#         str: Path to the merged results file
-#     """
-#     temp_files = glob.glob(f"{basename}_*.txt")
-#     merged_filename = f"{basename}_merged_results.txt"
-# 
-#     # Check if any temp files exist
-#     if not temp_files:
-#         print(f"Warning: No temporary files found matching pattern {basename}_*.txt")
-#         # Create an empty output file with headers
-#         with open(merged_filename, 'w') as merged_file:
-#             merged_file.write("Chromosome\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\tScore\tRawMatch\tPercMatch\tGaps\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\n")
-#         return merged_filename
-#     else:
-#         print(f"Found {len(temp_files)} temporary files to merge")
-#         
-#         # Initialize an empty DataFrame with the expected columns
-#         column_names = ["Chromosome", "i_start", "i_end", "j_start", "j_end", 
-#                        "eff_i_start", "eff_i_end", "eff_j_start", "eff_j_end", 
-#                        "Score", "RawMatch", "PercMatch", "Gaps", 
-#                        "i_seq", "j_seq", "structure", "dG(kcal/mol)", "percent_paired"]
-#         
-#         all_dfs = []
-#         
-#         # Process each temp file individually to better handle errors
-#         for temp_file in temp_files:
-#             try:
-#                 # Check if file is empty
-#                 if os.path.getsize(temp_file) == 0:
-#                     print(f"Skipping empty file: {temp_file}")
-#                     continue
-#                     
-#                 # Try to read the file with various approaches
-#                 try:
-#                     # First try reading without header assumptions
-#                     df = pd.read_csv(temp_file, sep="\t", header=None)
-#                     
-#                     # If we got here, the file was read successfully
-#                     if len(df.columns) == len(column_names):
-#                         df.columns = column_names
-#                         all_dfs.append(df)
-#                     else:
-#                         print(f"Warning: File {temp_file} has {len(df.columns)} columns, expected {len(column_names)}")
-#                         print(f"First row: {df.iloc[0].tolist()}")
-#                         
-#                         # Try to handle common cases - first line might be header
-#                         if len(df.columns) == 1 and isinstance(df.iloc[0, 0], str) and "\t" in df.iloc[0, 0]:
-#                             print(f"Attempting to parse as TSV with embedded tabs")
-#                             # Re-read with pandas' flexible parsing
-#                             df = pd.read_csv(temp_file, sep=None, engine='python')
-#                             if len(df.columns) == len(column_names):
-#                                 df.columns = column_names
-#                                 all_dfs.append(df)
-#                 except Exception as e:
-#                     print(f"Error reading file {temp_file}: {str(e)}")
-#                     
-#                     # Try a more basic approach - read line by line
-#                     print("Attempting manual parsing...")
-#                     manual_rows = []
-#                     with open(temp_file, 'r') as f:
-#                         for line in f:
-#                             if line.strip() and not line.startswith('#'):
-#                                 fields = line.strip().split('\t')
-#                                 if len(fields) == len(column_names):
-#                                     manual_rows.append(fields)
-#                     
-#                     if manual_rows:
-#                         print(f"Manually parsed {len(manual_rows)} rows from {temp_file}")
-#                         df = pd.DataFrame(manual_rows, columns=column_names)
-#                         all_dfs.append(df)
-#                     
-#             except Exception as e:
-#                 print(f"Failed to process file {temp_file}: {str(e)}")
-#         
-#         if all_dfs:
-#             # Combine all successfully read DataFrames
-#             df = pd.concat(all_dfs, ignore_index=True)
-#             
-#             # Handle empty DataFrame case
-#             if df.empty:
-#                 print("Warning: No data was successfully read from temp files")
-#                 # Create empty file with headers
-#                 with open(merged_filename, 'w') as merged_file:
-#                     merged_file.write("\t".join(column_names) + "\n")
-#             else:
-#                 # Convert coordinate columns to numeric for proper sorting
-#                 for col in ["i_start", "i_end", "j_start", "j_end", "eff_i_start", 
-#                             "eff_i_end", "eff_j_start", "eff_j_end"]:
-#                     df[col] = pd.to_numeric(df[col], errors='coerce')
-#                 
-#                 # Drop duplicate rows
-#                 df = df.drop_duplicates()
-#                 
-#                 # Convert all sequence columns to uppercase RNA
-#                 df['i_seq'] = df['i_seq'].str.upper().str.replace("T", "U")
-#                 df['j_seq'] = df['j_seq'].str.upper().str.replace("T", "U")
-#                 
-#                 # Sort the DataFrame by chromosome and numeric coordinates
-#                 df = df.sort_values(by=["Chromosome", "i_start", "i_end"])
-#                 
-#                 df['i_eff_seq'] = df.apply(lambda row: row['i_seq'][row['eff_i_start']-1:row['eff_i_end']], axis=1)
-#                 df['j_eff_seq'] = df.apply(lambda row: row['j_seq'][row['eff_j_start']-1:row['eff_j_end']], axis=1)
-# 
-#                 # Sort the DataFrame by chromosome and numeric coordinates
-#                 df = df.sort_values(by=["Chromosome", "i_start", "i_end"])
-#                 
-#                 # Write out the merged results
-#                 df.to_csv(merged_filename, sep="\t", index=False)
-#                 print(f"Successfully wrote {len(df)} records to {merged_filename}")
-#         else:
-#             print("Warning: No data could be read from any temp files")
-#             # Create empty file with headers
-#             with open(merged_filename, 'w') as merged_file:
-#                 merged_file.write("\t".join(column_names) + "\n")
-#         
-#         return merged_filename
     
-def predict_hybridization(seq1, seq2):
+def predict_hybridization(seq1, seq2, temperature=37):
     """
-    Predict RNA-RNA interactions using RNAduplex.
+    Predict RNA-RNA interactions using RNAduplex Python bindings.
     
     Args:
         seq1 (str): First RNA sequence
         seq2 (str): Second RNA sequence
+        temperature (int): Folding temperature in Celsius (default 37)
     
     Returns:
-        str: Raw output from RNAduplex containing structure and energy
+        str: Formatted output string compatible with parse_rnaduplex_output
     """
     try:
-        # Check if RNAduplex is available (platform-independent)
-        try:
-            # Try running RNAduplex with version flag to check if it exists
-            test_proc = subprocess.run(["RNAduplex", "--version"], capture_output=True, text=True)
-            if test_proc.returncode != 0:
-                # Try without version flag
-                test_proc = subprocess.run(["RNAduplex"], capture_output=True, text=True, input="\n")
-        except FileNotFoundError:
-            print("Error: RNAduplex not found. Please install ViennaRNA package.")
-            print("Install with: conda install -c bioconda viennarna")
-            return ""
-            
-        process = subprocess.Popen(
-            ["RNAduplex"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        input_data = f"{seq1}\n{seq2}\n".encode("utf-8")
-        stdout, stderr = process.communicate(input_data)
+        # Set temperature for ViennaRNA
+        RNA.cvar.temperature = temperature
         
-        if process.returncode != 0:
-            error_msg = stderr.decode('utf-8') if stderr else "Unknown error"
-            print(f"Error: RNAduplex failed with return code {process.returncode}: {error_msg}")
+        # Calculate duplex using Python bindings
+        result = RNA.duplexfold(seq1, seq2)
+        
+        # Parse structure to get lengths
+        structure_parts = result.structure.split('&')
+        if len(structure_parts) != 2:
+            print(f"Warning: Invalid duplex structure: {result.structure}")
             return ""
-            
-        output = stdout.decode("utf-8").strip()
-        if not output:
-            print(f"Warning: RNAduplex returned empty output for sequences of length {len(seq1)} and {len(seq2)}")
-            return ""
-            
+        
+        len1 = len(structure_parts[0])
+        len2 = len(structure_parts[1])
+        
+        # Calculate indices using the convention we discovered:
+        # i = 3' end of seq1 duplex region (1-based)
+        # j = 5' start of seq2 duplex region (1-based)
+        seq1_start = result.i - len1 + 1
+        seq1_end = result.i
+        seq2_start = result.j
+        seq2_end = result.j + len2 - 1
+        
+        # Format output to match CLI format for compatibility with parse_rnaduplex_output
+        # Format: "structure   seq1_start,seq1_end  :  seq2_start,seq2_end  (energy)"
+        output = f"{result.structure}   {seq1_start},{seq1_end}  :  {seq2_start},{seq2_end}  ({result.energy:.2f})"
+        
         return output
-    except FileNotFoundError:
-        print("Error: RNAduplex not found. Please install ViennaRNA package.")
+        
+    except ImportError:
+        print("Error: RNA module not found. Please install ViennaRNA Python bindings.")
         print("Install with: conda install -c bioconda viennarna")
         return ""
     except Exception as e:
-        print(f"Error running RNAduplex: {str(e)}")
+        print(f"Error running RNAduplex Python bindings: {str(e)}")
         return ""
 
 def parse_rnaduplex_output(output):
@@ -549,12 +421,13 @@ def result_writer(output_file, result_queue, num_workers):
     Deduplicates results based on coordinates.
     """
     with open(output_file, 'w') as f:
-        # Write header
-        f.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\t"
-                "i_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\t"
-                "eff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\t"
+        # Write header - basic coordinates first, structural details, then effective coords and sequences
+        f.write("Chromosome\tStrand\ti_start\ti_end\tj_start\tj_end\t"
+                "Score\tRawMatch\tPercMatch\tGaps\t"
                 "dG(kcal/mol)\tpercent_paired\tlongest_helix\t"
-                "orig_arm_length\teff_arm_length\n")
+                "orig_arm_length\teff_arm_length\t"
+                "eff_i_start\teff_i_end\teff_j_start\teff_j_end\t"
+                "i_seq\tj_seq\tstructure\n")
         
         workers_done = 0
         results_written = 0
@@ -579,18 +452,18 @@ def result_writer(output_file, result_queue, num_workers):
                 
                 seen_coordinates.add(coord_key)
                 
-                # Write result as TSV line
+                # Write result as TSV line - basic coords, structural details, eff coords, sequences
                 f.write(f"{result['chromosome']}\t{result['strand']}\t"
-                       f"{result['score']}\t{result['raw_match']}\t"
-                       f"{result['match_perc']}\t{result['gap_numb']}\t"
                        f"{result['i_start']}\t{result['i_end']}\t"
                        f"{result['j_start']}\t{result['j_end']}\t"
+                       f"{result['score']}\t{result['raw_match']}\t"
+                       f"{result['match_perc']}\t{result['gap_numb']}\t"
+                       f"{result['energy']}\t{result['percent_paired']}\t{result['longest_helix']}\t"
+                       f"{result['orig_arm_length']}\t{result['eff_arm_length']}\t"
                        f"{result['eff_i_start']}\t{result['eff_i_end']}\t"
                        f"{result['eff_j_start']}\t{result['eff_j_end']}\t"
                        f"{result['i_seq']}\t{result['j_seq']}\t"
-                       f"{result['structure']}\t{result['energy']}\t"
-                       f"{result['percent_paired']}\t{result['longest_helix']}\t"
-                       f"{result['orig_arm_length']}\t{result['eff_arm_length']}\n")
+                       f"{result['structure']}\n")
                 
                 results_written += 1
                 
@@ -605,27 +478,33 @@ def result_writer(output_file, result_queue, num_workers):
         
         print(f"Writer process finished. Wrote {results_written} results.")
 
-def process_window(i, window_start, window_size, basename, algorithm, args, fasta_file, chromosome, strand, result_queue):
-    """Process a genomic window to identify dsRNA structures and stream results to queue"""
+def process_window(i, window_start, window_size, basename, algorithm, args, full_sequence, chromosome, strand, result_queue):
+    """Process a genomic window to identify dsRNA structures and stream results to queue
+    
+    Args:
+        i: Start position in the sequence
+        window_start: Start position for coordinate calculations
+        window_size: Size of the window to process
+        basename: Base name for output files
+        algorithm: Algorithm to use (einverted)
+        args: Command line arguments
+        full_sequence: The complete sequence string (already reverse complemented if needed)
+        chromosome: Chromosome name
+        strand: Strand (+ or -)
+        result_queue: Queue for results
+    """
     results = []  # Collect results for this window
 
     if algorithm == "einverted":
-        # Extract the window sequence for stdin
-        window_seq = None
-        with smart_open(fasta_file) as f:
-            for record in SeqIO.parse(f, "fasta"):
-                # Extract the window sequence
-                window_seq = str(record.seq[i:i+window_size]).upper()
-                
-                # Check if the sequence is all Ns
-                if all(base == 'N' for base in window_seq):
-                    # Skip this window
-                    return
-                
-                # If we have a valid sequence, proceed with einverted
-                break
+        # Extract the window sequence from the provided full sequence
+        window_seq = full_sequence[i:i+window_size].upper()
         
-        if window_seq is None:
+        # Check if the sequence is all Ns
+        if all(base == 'N' for base in window_seq):
+            # Skip this window
+            return
+        
+        if not window_seq:
             return
         
         # Use stdin with einverted - provide sequence directly
@@ -686,7 +565,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 continue
                 
             # Extracting score, raw match, percentage match, and gaps
-            score = score_line[2]
+            score = score_line[2].rstrip(':')  # Remove trailing colon from score
             raw_match = score_line[3]
             matches, total = map(int, raw_match.split('/'))
             match_perc = round((matches / total) * 100, 2)    
@@ -715,7 +594,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             # Extract sequences from einverted output
             i_seq = seq_i_full[1].replace("-", "").upper()
             j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
-            output = predict_hybridization(i_seq, j_seq)
+            output = predict_hybridization(i_seq, j_seq, temperature=args.t)
             structure, indices_seq1, indices_seq2, energy = parse_rnaduplex_output(output)
             
             # Skip if we got empty results from RNAduplex
@@ -728,6 +607,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             # We need to add these to the genomic start positions (0-based adjustment)
             
             # Calculate effective coordinates based on RNAduplex trimming
+            # RNAduplex returns 1-based indices for the portions of sequences that form the duplex
             if strand == "-":
                 # For reverse strand, the sequences are reverse complemented
                 # RNAduplex indices are from the start of the RC sequences
@@ -751,11 +631,12 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 eff_j_start = j_start + (j_seq_len - indices_seq2[1])
                 eff_j_end = j_end - (indices_seq2[0] - 1)
             else:
-                # For forward strand, standard calculation
+                # For forward strand, RNAduplex indices map directly to genomic positions
+                # indices are 1-based, so we need to adjust
                 eff_i_start = i_start + (indices_seq1[0] - 1)
-                eff_i_end = i_start + (indices_seq1[1] - 1)
+                eff_i_end = i_start + indices_seq1[1] - 1
                 eff_j_start = j_start + (indices_seq2[0] - 1)
-                eff_j_end = j_start + (indices_seq2[1] - 1)
+                eff_j_end = j_start + indices_seq2[1] - 1
             
             # Debug coordinate conversion if needed
             # print(f"[DEBUG] Coordinate conversion: i_start={i_start}, indices_seq1={indices_seq1} -> eff_i=({eff_i_start}, {eff_i_end})")
@@ -797,15 +678,9 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 j += 5
                 continue
             
-            # For reverse strand, swap the structure parts to match browser visualization
-            # Browser shows j_seq + i_seq for negative strand
+            # Use the structure as-is from RNAduplex
+            # The structure should remain in the same format regardless of strand
             display_structure = structure
-            if strand == "-" and "&" in structure:
-                # Split structure at & and swap the parts
-                struct_parts = structure.split('&')
-                if len(struct_parts) == 2:
-                    # Swap the structure parts to match j+i order
-                    display_structure = struct_parts[1] + '&' + struct_parts[0]
             
             # Create result dictionary instead of writing to file
             result = {
@@ -890,13 +765,13 @@ def find_longest_helix(structure):
         return 0
             
 # Define the process_frame function
-def process_frame(frame_start, frame_step_size, end_coordinate, window_size, basename, algorithm, args, fasta_file, chromosome, strand, result_queue, pool):
+def process_frame(frame_start, frame_step_size, end_coordinate, window_size, basename, algorithm, args, full_sequence, chromosome, strand, result_queue, pool):
     for start in range(frame_start, end_coordinate, frame_step_size):
         window_start = start
         end = min(start + window_size, end_coordinate)
-        pool.apply_async(process_window, (start, window_start, window_size, basename, algorithm, args, fasta_file, chromosome, strand, result_queue))
+        pool.apply_async(process_window, (start, window_start, window_size, basename, algorithm, args, full_sequence, chromosome, strand, result_queue))
         # For debugging, run the process_window function directly
-        # process_window(start, start, args.w, basename, args.algorithm, args, fasta_file, chromosome, strand, result_queue)
+        # process_window(start, start, args.w, basename, args.algorithm, args, full_sequence, chromosome, strand, result_queue)
 
 def main():
     ### Arguments
@@ -939,6 +814,10 @@ def main():
                         help='Use this option if running on reverse strand')
     parser.add_argument('--chr', type=str, default='header',
                         help='Chromosome name, if chromosome name in header type "header" (default: header)')
+    parser.add_argument('--output_label', type=str, default='header',
+                        help='Label for output files and results (default: use sequence header)')
+    parser.add_argument('--only_seq', type=str, default=None,
+                        help='Only scan this specific sequence')
     parser.add_argument('-c', '--cpus', type=int, default=4,
                         help='Number of cpus to use; Default = 4')
     parser.add_argument('--clean', action='store_false', default=True,
@@ -1019,6 +898,10 @@ def main():
             tasks = []
 
             for cur_record in SeqIO.parse(f, "fasta"): 
+                # Skip sequences if only_seq is specified and this isn't it
+                if hasattr(args, 'only_seq') and args.only_seq and cur_record.name != args.only_seq:
+                    continue
+                    
                 sequence_count += 1
                 # Correct for starting coordinate
                 print(f"Processing sequence: {cur_record.name}")
@@ -1031,369 +914,142 @@ def main():
                 if not cur_record.seq:
                     print(f"Warning: No sequence data for {cur_record.name}, skipping...")
                     continue   
-            # Print the sequence length
-            #print(f"Sequence length: {len(cur_record.seq)}")
-            
-            # Convert to RNA uppercase
-            #cur_record.seq = cur_record.seq.transcribe().upper()
-            
-            # Check if chromosome is 'header'
-            if args.chr == "header":
-                chromosome = cur_record.name
-            else:
-                chromosome = args.chr
-
-            # Determine strand and set up basename
-            strand = "-" if args.reverse else "+"
-            # Get base filename without extension(s)
-            base_filename = args.filename
-            if base_filename.endswith('.gz'):
-                base_filename = base_filename[:-3]  # Remove .gz
-            if base_filename.endswith('.fa') or base_filename.endswith('.fasta'):
-                base_filename = os.path.splitext(base_filename)[0]
-            
-            if args.reverse:
-                # Reverse complement the sequence and print to new fasta file
-                reverse_fasta = os.path.join(output_dir, f"{os.path.basename(base_filename)}.{chromosome}.reverse.fasta")
-                with open(reverse_fasta, 'w+') as reverse_file:
-                    reverse_file.write(f">{cur_record.name}\n")
-                    reverse_file.write(str(cur_record.seq.reverse_complement().upper()))
-                # Set filename to the new reverse complemented fasta file
-                fasta_file = reverse_fasta
-            else:
-                # Write forward strand to new fasta file
-                forward_fasta = os.path.join(output_dir, f"{os.path.basename(base_filename)}.{chromosome}.forward.fasta")
-                with open(forward_fasta, 'w+') as forward_file:
-                    forward_file.write(f">{cur_record.name}\n")
-                    forward_file.write(str(cur_record.seq.upper()))
-                # Set filename to the new RNA fasta file
-                fasta_file = forward_fasta
-            
-            # Set up basename for output files
-            basename = f"{base_filename}.{chromosome}.{'reverse' if args.reverse else 'forward'}_win{args.w}_step{args.step}_start{args.start}_score{args.score}"
-
-            # Result files are now written directly via streaming (merged_results.txt)
-            
-            # with open(f"{basename}.dsRNApredictions.bp", 'w+') as bp_file:
-            #     # Example header - adjust based on your requirements
-            #     bp_file.write("# Base Pair Predictions\n")
-            #     bp_file.write("# Format: sequence_id\tstart\tend\n")
-
-            # Process each sequence
-            end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
-            seq_length = end_coordinate - args.start
-
-            # Determine if the sequence is short (less than window size)
-            is_short_sequence = seq_length < args.w
-
-            # Print what we're scanning now
-            if is_short_sequence:
-                print(f"Short sequence detected: {cur_record.name} length {seq_length} bp")
-                print(f"Using single window approach for the entire sequence")
+                # Print the sequence length
+                #print(f"Sequence length: {len(cur_record.seq)}")
                 
-                # Just process the entire sequence as one window
-                # For single window, process directly and write results
-                results = process_window(args.start, args.start, seq_length, basename, args.algorithm, 
-                            args, fasta_file, chromosome, strand, result_queue)
+                # Convert to RNA uppercase
+                #cur_record.seq = cur_record.seq.transcribe().upper()
                 
-                # Write results directly for single window
-                merged_filename = os.path.join(output_dir, f"{os.path.basename(basename)}_merged_results.txt")
-                with open(merged_filename, 'w') as f:
-                    f.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\t"
-                           "i_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\t"
-                           "eff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\t"
-                           "dG(kcal/mol)\tpercent_paired\tlongest_helix\t"
-                           "orig_arm_length\teff_arm_length\n")
-                    
-                    while not result_queue.empty():
-                        result = result_queue.get()
-                        f.write(f"{result['chromosome']}\t{result['strand']}\t"
-                               f"{result['score']}\t{result['raw_match']}\t"
-                               f"{result['match_perc']}\t{result['gap_numb']}\t"
-                               f"{result['i_start']}\t{result['i_end']}\t"
-                               f"{result['j_start']}\t{result['j_end']}\t"
-                               f"{result['eff_i_start']}\t{result['eff_i_end']}\t"
-                               f"{result['eff_j_start']}\t{result['eff_j_end']}\t"
-                               f"{result['i_seq']}\t{result['j_seq']}\t"
-                               f"{result['structure']}\t{result['energy']}\t"
-                               f"{result['percent_paired']}\t{result['longest_helix']}\t"
-                               f"{result['orig_arm_length']}\t{result['eff_arm_length']}\n")
-            else:
-                # Normal processing for longer sequences
-                print(f"Scanning {cur_record.name} from {args.start} to {end_coordinate} with window size {args.w} and step size {args.step}")
-                
-                # Set up output file
-                merged_filename = os.path.join(output_dir, f"{os.path.basename(basename)}_merged_results.txt")
-                
-                # Start the writer process
-                writer_proc = multiprocessing.Process(target=result_writer, 
-                                                    args=(merged_filename, result_queue, cpu_count))
-                writer_proc.start()
-                
-                # Create a pool of workers for multiprocessing 
-                pool = multiprocessing.Pool(cpu_count)
-                tasks = []
-                
-                
-                # Use multiprocessing for longer sequences
-                frame_step_size = step_size * cpu_count
-                for cpu_index in range(cpu_count):
-                    # Start from the specified start coordinate plus the CPU's offset
-                    frame_start = args.start + (cpu_index * step_size)
-
-                    # Start processing at each frame and jump by frame_step_size
-                    for start in range(frame_start, end_coordinate, frame_step_size):
-                        window_end = min(start + args.w, end_coordinate)
-                        window_size = window_end - start
-                        
-                        # Only process if we have a meaningful window
-                        if window_size >= args.min:
-                            tasks.append(pool.apply_async(process_window, 
-                                        (start, start, window_size, basename, args.algorithm, 
-                                        args, fasta_file, chromosome, strand, result_queue)))
-                # Close the pool and wait for all workers to finish
-                pool.close()
-                pool.join()
-                
-                # Signal writer that all workers are done
-                for _ in range(cpu_count):
-                    result_queue.put("DONE")
-                
-                # Wait for writer to finish
-                writer_proc.join()
-
-            # Results are already written by the writer process
-            print(f"\nResults saved to: {merged_filename}")
-
-            # Skip all the old temp file merging logic - streaming is used now
-            if False:  # Disabled - we're using streaming now
-                print(f"Warning: No temporary files found matching pattern {basename}_*.txt")
-                # Create an empty output file with headers to avoid downstream errors
-                with open(merged_filename, 'w') as merged_file:
-                    merged_file.write("Chromosome\tStrand\tScore\tRawMatch\tPercMatch\tGaps\ti_start\ti_end\tj_start\tj_end\teff_i_start\teff_i_end\teff_j_start\teff_j_end\ti_seq\tj_seq\tstructure\tdG(kcal/mol)\tpercent_paired\tlongest_helix\torig_arm_length\teff_arm_length\n")
-                print(f"Found {len('temp_files')} temporary files to merge")
-                
-                # Also update the column_names list in the merging section:
-                column_names = ["Chromosome", "Strand", "Score", "RawMatch", "PercMatch", "Gaps", 
-                            "i_start", "i_end", "j_start", "j_end", "eff_i_start", "eff_i_end", 
-                            "eff_j_start", "eff_j_end", "i_seq", "j_seq", "structure", 
-                            "dG(kcal/mol)", "percent_paired", "longest_helix", "orig_arm_length", "eff_arm_length"]
-                
-                all_dfs = []
-                
-                # Process each temp file individually to better handle errors
-                for temp_file in temp_files:
-                    try:
-                        # Check if file is empty
-                        if os.path.getsize(temp_file) == 0:
-                            print(f"Skipping empty file: {temp_file}")
-                            continue
-                            
-                        # Try to read the file with various approaches
-                        try:
-                            # First try reading without header assumptions
-                            df = pd.read_csv(temp_file, sep="\t", header=None)
-                            
-                            # If we got here, the file was read successfully
-                            if len(df.columns) == len(column_names):
-                                df.columns = column_names
-                                all_dfs.append(df)
-                            else:
-                                print(f"Warning: File {temp_file} has {len(df.columns)} columns, expected {len(column_names)}")
-                                print(f"First row: {df.iloc[0].tolist()}")
-                                
-                                # Try to handle common cases - first line might be header
-                                if len(df.columns) == 1 and isinstance(df.iloc[0, 0], str) and "\t" in df.iloc[0, 0]:
-                                    print(f"Attempting to parse as TSV with embedded tabs")
-                                    # Re-read with pandas' flexible parsing
-                                    df = pd.read_csv(temp_file, sep=None, engine='python')
-                                    if len(df.columns) == len(column_names):
-                                        df.columns = column_names
-                                        all_dfs.append(df)
-                        except Exception as e:
-                            print(f"Error reading file {temp_file}: {str(e)}")
-                            
-                            # Try a more basic approach - read line by line
-                            print("Attempting manual parsing...")
-                            manual_rows = []
-                            with open(temp_file, 'r') as f:
-                                for line in f:
-                                    if line.strip() and not line.startswith('#'):
-                                        fields = line.strip().split('\t')
-                                        if len(fields) == len(column_names):
-                                            manual_rows.append(fields)
-                            
-                            if manual_rows:
-                                print(f"Manually parsed {len(manual_rows)} rows from {temp_file}")
-                                df = pd.DataFrame(manual_rows, columns=column_names)
-                                all_dfs.append(df)
-                            
-                    except Exception as e:
-                        print(f"Failed to process file {temp_file}: {str(e)}")
-                
-                
-                if all_dfs:
-                    # Combine all successfully read DataFrames
-                    df = pd.concat(all_dfs, ignore_index=True)
-                    
-                    # Handle empty DataFrame case
-                    if df.empty:
-                        print("Warning: No data was successfully read from temp files")
-                        # Create empty file with headers
-                        with open(merged_filename, 'w') as merged_file:
-                            merged_file.write("\t".join(column_names) + "\n")
+                # Check if chromosome is 'header' - use new parameter names with fallback
+                if hasattr(args, 'output_label'):
+                    if args.output_label == "header":
+                        chromosome = cur_record.name
                     else:
-                        # Convert coordinate columns to numeric for proper sorting
-                        for col in ["i_start", "i_end", "j_start", "j_end", "eff_i_start", 
-                                    "eff_i_end", "eff_j_start", "eff_j_end"]:
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                                        
-                        # Drop duplicate rows
-                        df = df.drop_duplicates()
-                        
-                        # Convert all sequence columns to uppercase RNA
-                        df['i_seq'] = df['i_seq'].str.upper().str.replace("T", "U")
-                        df['j_seq'] = df['j_seq'].str.upper().str.replace("T", "U")
-                        
-                        # Sort the DataFrame by chromosome and numeric coordinates
-                        df = df.sort_values(by=["Chromosome", "i_start", "i_end"])
-                        
-                        # Extract effective sequences based on RNAduplex coordinates
-                        def extract_effective_seq_from_coordinates(row):
-                            """
-                            Extract effective sequences using the coordinates that show
-                            where RNAduplex found the optimal duplex.
-                            
-                            The trick is that RNAduplex gives us positions relative to the 
-                            input sequences (i_seq and j_seq), and we need to extract
-                            those subsequences.
-                            """
-                            try:
-                                i_seq = str(row['i_seq'])
-                                j_seq = str(row['j_seq'])
-                                
-                                # Get the effective boundaries from our stored coordinates
-                                strand = row.get('Strand', '+')
-                                
-                                if strand == '-':
-                                    # For reverse strand, the sequences are reverse complemented
-                                    # So trimming from the genomic start is trimming from the sequence end
-                                    
-                                    # For i_seq
-                                    if (int(row['eff_i_start']) == int(row['i_start']) and 
-                                        int(row['eff_i_end']) == int(row['i_end'])):
-                                        # No trimming - use full i_seq
-                                        i_start_in_seq = 0
-                                        i_end_in_seq = len(i_seq)
-                                    else:
-                                        # Calculate how much was trimmed from each end in genomic coords
-                                        trim_from_genomic_start = int(row['eff_i_start']) - int(row['i_start'])
-                                        trim_from_genomic_end = int(row['i_end']) - int(row['eff_i_end'])
-                                        # In RC sequence, this is reversed
-                                        i_start_in_seq = trim_from_genomic_end
-                                        i_end_in_seq = len(i_seq) - trim_from_genomic_start
-                                    
-                                    # For j_seq
-                                    if (int(row['eff_j_start']) == int(row['j_start']) and 
-                                        int(row['eff_j_end']) == int(row['j_end'])):
-                                        # No trimming - use full j_seq
-                                        j_start_in_seq = 0
-                                        j_end_in_seq = len(j_seq)
-                                    else:
-                                        # Calculate how much was trimmed from each end in genomic coords
-                                        trim_from_genomic_start = int(row['eff_j_start']) - int(row['j_start'])
-                                        trim_from_genomic_end = int(row['j_end']) - int(row['eff_j_end'])
-                                        # In RC sequence, this is reversed
-                                        j_start_in_seq = trim_from_genomic_end
-                                        j_end_in_seq = len(j_seq) - trim_from_genomic_start
-                                else:
-                                    # Forward strand - standard calculation
-                                    if (int(row['eff_i_start']) == int(row['i_start']) and 
-                                        int(row['eff_i_end']) == int(row['i_end'])):
-                                        # No trimming - use full i_seq
-                                        i_start_in_seq = 0
-                                        i_end_in_seq = len(i_seq)
-                                    else:
-                                        # Calculate trimming offsets
-                                        i_start_in_seq = int(row['eff_i_start']) - int(row['i_start'])
-                                        i_end_in_seq = int(row['eff_i_end']) - int(row['i_start']) + 1
-                                    
-                                    if (int(row['eff_j_start']) == int(row['j_start']) and 
-                                        int(row['eff_j_end']) == int(row['j_end'])):
-                                        # No trimming - use full j_seq
-                                        j_start_in_seq = 0
-                                        j_end_in_seq = len(j_seq)
-                                    else:
-                                        # Calculate trimming offsets
-                                        j_start_in_seq = int(row['eff_j_start']) - int(row['j_start'])
-                                        j_end_in_seq = int(row['eff_j_end']) - int(row['j_start']) + 1
-                                
-                                # Extract the subsequences
-                                i_eff_seq = i_seq[i_start_in_seq:i_end_in_seq] if i_start_in_seq >= 0 and i_end_in_seq <= len(i_seq) else i_seq
-                                j_eff_seq = j_seq[j_start_in_seq:j_end_in_seq] if j_start_in_seq >= 0 and j_end_in_seq <= len(j_seq) else j_seq
-                                
-                                # Validate against structure lengths
-                                structure_parts = row['structure'].split('&')
-                                if len(structure_parts) == 2:
-                                    expected_i_len = len(structure_parts[0])
-                                    expected_j_len = len(structure_parts[1])
-                                    
-                                    # If extraction failed or lengths don't match, use structure as guide
-                                    # This often happens when RNAduplex doesn't trim (uses full sequence)
-                                    if len(i_eff_seq) != expected_i_len:
-                                        # Check if we should use the full sequence
-                                        if expected_i_len == len(i_seq):
-                                            i_eff_seq = i_seq
-                                        else:
-                                            # Use structure length as guide for actual trimming
-                                            i_eff_seq = i_seq[:expected_i_len]
-                                    
-                                    if len(j_eff_seq) != expected_j_len:
-                                        # Check if we should use the full sequence
-                                        if expected_j_len == len(j_seq):
-                                            j_eff_seq = j_seq
-                                        else:
-                                            # Use structure length as guide for actual trimming
-                                            j_eff_seq = j_seq[:expected_j_len]
-                                
-                                return i_eff_seq, j_eff_seq
-                                
-                            except Exception as e:
-                                print(f"Warning: Could not extract effective sequences: {e}")
-                                # Fallback to structure-based extraction
-                                structure_parts = row.get('structure', '').split('&')
-                                if len(structure_parts) == 2:
-                                    i_len = len(structure_parts[0])
-                                    j_len = len(structure_parts[1])
-                                    return row['i_seq'][:i_len], row['j_seq'][:j_len]
-                                return row.get('i_seq', ''), row.get('j_seq', '')
-                        
-
-                        # Extract effective sequences based on structure lengths
-                        effective_seqs = df.apply(extract_effective_seq_from_coordinates, axis=1)
-                        df['i_eff_seq'] = effective_seqs.apply(lambda x: x[0])
-                        df['j_eff_seq'] = effective_seqs.apply(lambda x: x[1])
-
-
-                        # Write out the merged results
-                        df.to_csv(merged_filename, sep="\t", index=False)
-                        print(f"Successfully wrote {len(df)} records to {merged_filename}")
-                        
-                        # Check if any results were found
-                        if len(df) == 0:
-                            print("\nNo dsRNA structures were found with the current parameters.")
-                            print("Consider adjusting the following parameters:")
-                            print(f"  - Lower the score threshold (current: {args.score})")
-                            print(f"  - Lower the paired cutoff percentage (current: {args.paired_cutoff}%)")
-                            print(f"  - Increase the window size (current: {args.w})")
-                            print(f"  - Decrease the minimum inverted repeat length (current: {args.min})")
-                
+                        chromosome = args.output_label
+                elif args.chr == "header":
+                    chromosome = cur_record.name
                 else:
-                    print("Warning: No data could be read from any temp files")
-                    # Create empty file with headers
-                    with open(merged_filename, 'w') as merged_file:
-                        merged_file.write("\t".join(column_names) + "\n")
+                    chromosome = args.chr
 
+                # Determine strand and set up basename
+                strand = "-" if args.reverse else "+"
+                # Get base filename without extension(s)
+                base_filename = args.filename
+                if base_filename.endswith('.gz'):
+                    base_filename = base_filename[:-3]  # Remove .gz
+                if base_filename.endswith('.fa') or base_filename.endswith('.fasta'):
+                    base_filename = os.path.splitext(base_filename)[0]
+                
+                # Prepare the sequence in memory (reverse complement if needed)
+                if args.reverse:
+                    # For reverse strand, reverse complement the entire sequence once
+                    full_sequence = str(cur_record.seq.reverse_complement().upper())
+                else:
+                    # For forward strand, just use the sequence as-is
+                    full_sequence = str(cur_record.seq.upper())
+                
+                # Set up basename for output files
+                basename = f"{base_filename}.{chromosome}.{'reverse' if args.reverse else 'forward'}_win{args.w}_step{args.step}_start{args.start}_score{args.score}"
+
+                # Result files are now written directly via streaming (merged_results.txt)
+                
+                # with open(f"{basename}.dsRNApredictions.bp", 'w+') as bp_file:
+                #     # Example header - adjust based on your requirements
+                #     bp_file.write("# Base Pair Predictions\n")
+                #     bp_file.write("# Format: sequence_id\tstart\tend\n")
+
+                # Process each sequence
+                end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
+                seq_length = end_coordinate - args.start
+
+                # Determine if the sequence is short (less than window size)
+                is_short_sequence = seq_length < args.w
+
+                # Print what we're scanning now
+                if is_short_sequence:
+                    print(f"Short sequence detected: {cur_record.name} length {seq_length} bp")
+                    print(f"Using single window approach for the entire sequence")
+                    
+                    # Just process the entire sequence as one window
+                    # For single window, process directly and write results
+                    results = process_window(args.start, args.start, seq_length, basename, args.algorithm, 
+                                args, full_sequence, chromosome, strand, result_queue)
+                    
+                    # Write results directly for single window
+                    merged_filename = os.path.join(output_dir, f"{os.path.basename(basename)}_merged_results.txt")
+                    with open(merged_filename, 'w') as f:
+                        # Write header - basic coordinates first, structural details, then effective coords and sequences
+                        f.write("Chromosome\tStrand\ti_start\ti_end\tj_start\tj_end\t"
+                               "Score\tRawMatch\tPercMatch\tGaps\t"
+                               "dG(kcal/mol)\tpercent_paired\tlongest_helix\t"
+                               "orig_arm_length\teff_arm_length\t"
+                               "eff_i_start\teff_i_end\teff_j_start\teff_j_end\t"
+                               "i_seq\tj_seq\tstructure\n")
+                        
+                        while not result_queue.empty():
+                            result = result_queue.get()
+                            # Write result - basic coords, structural details, eff coords, sequences
+                            f.write(f"{result['chromosome']}\t{result['strand']}\t"
+                                   f"{result['i_start']}\t{result['i_end']}\t"
+                                   f"{result['j_start']}\t{result['j_end']}\t"
+                                   f"{result['score']}\t{result['raw_match']}\t"
+                                   f"{result['match_perc']}\t{result['gap_numb']}\t"
+                                   f"{result['energy']}\t{result['percent_paired']}\t{result['longest_helix']}\t"
+                                   f"{result['orig_arm_length']}\t{result['eff_arm_length']}\t"
+                                   f"{result['eff_i_start']}\t{result['eff_i_end']}\t"
+                                   f"{result['eff_j_start']}\t{result['eff_j_end']}\t"
+                                   f"{result['i_seq']}\t{result['j_seq']}\t"
+                                   f"{result['structure']}\n")
+                else:
+                    # Normal processing for longer sequences
+                    print(f"Scanning {cur_record.name} from {args.start} to {end_coordinate} with window size {args.w} and step size {args.step}")
+                    
+                    # Set up output file
+                    merged_filename = os.path.join(output_dir, f"{os.path.basename(basename)}_merged_results.txt")
+                    
+                    # Start the writer process
+                    writer_proc = multiprocessing.Process(target=result_writer, 
+                                                        args=(merged_filename, result_queue, cpu_count))
+                    writer_proc.start()
+                    
+                    # Create a pool of workers for multiprocessing 
+                    pool = multiprocessing.Pool(cpu_count)
+                    tasks = []
+                    
+                    
+                    # Use multiprocessing for longer sequences
+                    frame_step_size = step_size * cpu_count
+                    for cpu_index in range(cpu_count):
+                        # Start from the specified start coordinate plus the CPU's offset
+                        frame_start = args.start + (cpu_index * step_size)
+
+                        # Start processing at each frame and jump by frame_step_size
+                        for start in range(frame_start, end_coordinate, frame_step_size):
+                            window_end = min(start + args.w, end_coordinate)
+                            window_size = window_end - start
+                            
+                            # Only process if we have a meaningful window
+                            if window_size >= args.min:
+                                tasks.append(pool.apply_async(process_window, 
+                                            (start, start, window_size, basename, args.algorithm, 
+                                            args, full_sequence, chromosome, strand, result_queue)))
+                    # Close the pool and wait for all workers to finish
+                    pool.close()
+                    pool.join()
+                    
+                    # Signal writer that all workers are done
+                    for _ in range(cpu_count):
+                        result_queue.put("DONE")
+                    
+                    # Wait for writer to finish
+                    writer_proc.join()
+
+                    # Results are already written by the writer process
+                    print(f"\nResults saved to: {merged_filename}")
+
+                    # If we're only processing one specific sequence, stop after finding it
+                    if hasattr(args, 'only_seq') and args.only_seq:
+                        break
 
             # Now generate the BP file
             try:

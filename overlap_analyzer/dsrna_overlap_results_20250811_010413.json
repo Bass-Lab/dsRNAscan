@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "input_file": "examples/microexons_30bp.bed",
+    "format": "BED",
+    "subset": "conserved_high_conf",
+    "timestamp": "20250811_010413",
+    "options": {
+      "input_file": "examples/microexons_30bp.bed",
+      "format": "auto",
+      "subset": "conserved_high_conf",
+      "feature_type": null,
+      "strand_specific": false,
+      "min_overlap": 1,
+      "permutations": 10,
+      "control_dir": null,
+      "output_prefix": "dsrna_overlap",
+      "output_format": "both",
+      "dsrna_file": null,
+      "list_subsets": false,
+      "generate_controls": null,
+      "recommend_subset": false,
+      "verbose": false,
+      "keep_temp": false,
+      "enhanced_output": true,
+      "plot": true
+    }
+  },
+  "results": {
+    "basic": {
+      "n_query_features": 26444,
+      "n_dsrna_regions": 1591,
+      "n_dsrna_intervals": 3182,
+      "n_query_overlapping": 40,
+      "n_dsrna_overlapping": 14,
+      "query_overlap_pct": 0.15126304643775526,
+      "dsrna_overlap_pct": 0.43997485857950974,
+      "reciprocal_overlap_score": 0.025797662193454116,
+      "format": "BED"
+    },
+    "enrichment": {
+      "observed_overlaps": 14,
+      "expected_overlaps": 1.8,
+      "control_mean": 1.8,
+      "control_std": 1.661324772583615,
+      "control_min": 0,
+      "control_max": 5,
+      "fold_enrichment": 7.777777777777778,
+      "z_score": 7.34353703823192,
+      "p_value": 0.18181818181818182,
+      "p_enrichment": 0.09090909090909091,
+      "p_depletion": 1.0,
+      "n_permutations": 10
+    }
+  }
+}

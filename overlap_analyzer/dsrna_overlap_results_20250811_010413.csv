@@ -1,0 +1,2 @@
+input_file,feature_name,dsrna_subset,total_features,total_dsrna_regions,features_overlapping_dsrna,dsrna_overlapping_features,feature_overlap_percent,dsrna_overlap_percent,reciprocal_overlap_score,observed_overlaps,expected_overlaps,fold_enrichment,z_score,p_value,n_permutations
+examples/microexons_30bp.bed,microexons_30bp,conserved_high_conf,26444,1591,40,14,0.15,0.44,0.026,14,1.8,7.78,7.34,0.1818,10
