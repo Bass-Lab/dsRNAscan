@@ -73,25 +73,40 @@ class CustomBuildPy(build_py):
                 print(f"Found {binary_name} but it's not a valid binary, will compile from source")
                 
         # No pre-compiled binary found, must compile from source
-        print("No pre-compiled binary found. Compiling einverted with G-U patch...")
+        print(f"No pre-compiled binary found for {system} {machine}")
+        print("Will compile einverted from source with G-U wobble patch...")
         
         # Try to compile from EMBOSS source with patch
-        compile_script = os.path.join(os.path.dirname(__file__), 'compile_patched_einverted.sh')
-        patch_file = os.path.join(os.path.dirname(__file__), 'einverted.patch')
+        # Use absolute path resolution that works in sdist builds
+        setup_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Also check if einverted.c exists as another indicator we're in the right place
+        einverted_c = os.path.join(setup_dir, 'einverted.c')
+        compile_script = os.path.join(setup_dir, 'compile_patched_einverted.sh')
+        patch_file = os.path.join(setup_dir, 'einverted.patch')
         
         # Always try to compile with the G-U patch
         if os.path.exists(compile_script) and os.path.exists(patch_file):
+            print(f"Found compilation files:")
+            print(f"  Script: {compile_script}")
+            print(f"  Patch: {patch_file}")
             print("Compiling einverted with G-U wobble patch...")
             try:
                 # Make script executable
                 os.chmod(compile_script, 0o755)
                 
                 # Run the compilation script
+                # Set environment to help the script find files
+                env = os.environ.copy()
+                env['SETUP_DIR'] = setup_dir
+                env['TARGET_DIR'] = tools_dir
+                
                 result = subprocess.run(
                     ['bash', compile_script],
-                    cwd=os.path.dirname(__file__),
+                    cwd=setup_dir,
                     capture_output=True,
-                    text=True
+                    text=True,
+                    env=env
                 )
                 
                 if result.returncode == 0:
@@ -125,7 +140,13 @@ class CustomBuildPy(build_py):
                 print("="*60 + "\n")
                 raise RuntimeError(f"Failed to compile einverted with G-U patch: {e}")
         else:
-            raise RuntimeError(f"Missing required files for compilation: compile_script={compile_script}, patch={patch_file}")
+            print(f"ERROR: Required compilation files not found!")
+            print(f"  Looking for script at: {compile_script} (exists: {os.path.exists(compile_script)})")
+            print(f"  Looking for patch at: {patch_file} (exists: {os.path.exists(patch_file)})")
+            print(f"  Current directory: {os.getcwd()}")
+            print(f"  Setup directory: {setup_dir}")
+            print(f"  Directory contents: {os.listdir(setup_dir) if os.path.exists(setup_dir) else 'Directory not found'}")
+            raise RuntimeError(f"Missing required files for compilation")
 
 class CustomInstallCommand(install):
     """Custom installation to use CustomBuildPy"""
