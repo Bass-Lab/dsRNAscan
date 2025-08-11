@@ -130,6 +130,38 @@ pip install --user git+https://github.com/Bass-Lab/dsRNAscan.git
 ```
 
 
+## Using dsRNAscan as a Python Module
+
+While primarily designed as a command-line tool, dsRNAscan can be imported and used in Python scripts:
+
+```python
+# Method 1: Simple usage
+from dsrnascan import main
+import sys
+
+# Simulate command line arguments
+sys.argv = ['dsrnascan', 'input.fasta', '-w', '1000', '--score', '30']
+main()
+
+# Method 2: Using subprocess for better control
+import subprocess
+result = subprocess.run(['dsrnascan', 'input.fasta', '--score', '30'], 
+                       capture_output=True, text=True)
+
+# Method 3: Parse results programmatically
+import pandas as pd
+import glob
+
+# Run dsRNAscan
+subprocess.run(['dsrnascan', 'input.fasta'])
+
+# Find and read results
+output_dir = sorted(glob.glob('dsrnascan_*'))[-1]
+results = pd.read_csv(f"{output_dir}/*_merged_results.txt", sep='\t')
+```
+
+For more examples, see `using_dsrnascan_as_module.py` in the repository.
+
 ## Algorithm Details
 
 dsRNAscan uses a multi-step approach:
@@ -150,6 +182,10 @@ Comprehensive mapping of human dsRNAome reveals conservation, neuronal enrichmen
 https://doi.org/10.1101/2025.01.24.634786
 
 
+
+## Additional Tools
+
+- **overlap_analyzer/** - Statistical enrichment analysis for genomic features overlapping with dsRNA predictions. See [overlap_analyzer/README.md](overlap_analyzer/README.md) for details.
 
 ## License
 
