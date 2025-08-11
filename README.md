@@ -4,52 +4,17 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**dsRNAscan** is a bioinformatics tool for genome-wide identification of **double-stranded RNA (dsRNA) structures**. It uses a sliding window approach to detect inverted repeats that can form dsRNA secondary structures, with special support for **G-U wobble base pairing** critical for RNA analysis.
+**dsRNAscan** is a bioinformatics tool for genome-wide identification of **double-stranded RNA (dsRNA) structures**. It uses a sliding window approach to detect inverted repeats that can form dsRNA secondary structures, with special support for **G-U wobble base pairing**.
 
-## 🚀 Quick Start
-
-### Install from PyPI (Coming Soon)
+### Install from PyPI 
 ```bash
 pip install dsrnascan
-```
-
-### Install from GitHub  
-```bash
-# Direct from GitHub with automatic einverted compilation
-pip install --no-binary :all: git+https://github.com/Bass-Lab/dsRNAscan.git
-
-# Or if you prefer using pre-built wheels (faster but einverted needs separate setup)
-pip install git+https://github.com/Bass-Lab/dsRNAscan.git
-```
-
-### Install from Local Files
-```bash
-# Option 1: Clone and install with einverted compilation
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-pip install --no-binary :all: .
-
-# Option 2: Quick install (uses pre-compiled binaries if available)
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-pip install .
-
-# Option 3: Development mode (editable install)
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-pip install -e .
-
-# Option 4: Manual einverted compilation then install
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-./compile_patched_einverted.sh  # Compile einverted with G-U patch
-pip install .
 ```
 
 ### Basic Usage
 ```bash
 # Scan a genome/sequence for dsRNA structures
-dsrnascan input.fasta -w 10000 -s 150 --score 50
+dsrnascan input.fasta # This uses defaults of -w 10000 -s 150 --score 50
 
 # Process specific chromosome
 dsrnascan genome.fasta --chr chr21 -c 8
@@ -95,15 +60,7 @@ cd dsRNAscan
 DSRNASCAN_COMPILE_FULL=true pip install .
 ```
 
-## 🧬 Key Features
-
-- **G-U Wobble Base Pairing**: Modified einverted algorithm specifically for RNA
-- **Parallel Processing**: Multi-CPU support for genome-scale analysis
-- **Flexible Windowing**: Customizable window and step sizes
-- **RNA Structure Prediction**: Integration with ViennaRNA for structure validation
-- **Multiple Output Formats**: Tab-delimited results and IGV visualization files
-
-## 📖 Detailed Usage
+## Detailed Usage
 
 ### Command-Line Options
 
@@ -147,7 +104,7 @@ dsrnascan transcripts.fa -w 1000 --paired_cutoff 60
 dsrnascan sequence.fa --reverse
 ```
 
-## 🔧 Installation Troubleshooting
+## Installation Troubleshooting
 
 ### "einverted binary not found"
 The package needs einverted from EMBOSS. Solutions:
@@ -172,19 +129,8 @@ module load emboss      # if available
 pip install --user git+https://github.com/Bass-Lab/dsRNAscan.git
 ```
 
-## 🧪 Testing
 
-Run test with sample data:
-```bash
-# Create test file
-echo ">test_sequence" > test.fasta
-echo "GGGGGGGGGGAAAAAAAAAAAAAACCCCCCCCCC" >> test.fasta
-
-# Run dsRNAscan
-dsrnascan test.fasta -w 100 -s 50 --score 15
-```
-
-## 📚 Algorithm Details
+## Algorithm Details
 
 dsRNAscan uses a multi-step approach:
 
@@ -196,27 +142,20 @@ dsRNAscan uses a multi-step approach:
 
 The key innovation is the **G-U wobble patch** for einverted, allowing detection of RNA-specific base pairs crucial for identifying functional dsRNA structures.
 
-## 📄 Citation
+## Citation
 
 If you use dsRNAscan in your research, please cite:
-```
-Bass Lab. dsRNAscan: A tool for genome-wide prediction of double-stranded RNA structures.
-https://github.com/Bass-Lab/dsRNAscan
-```
+Comprehensive mapping of human dsRNAome reveals conservation, neuronal enrichment, and intermolecular interactions
 
-## 🤝 Contributing
+https://doi.org/10.1101/2025.01.24.634786
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
 
-## 📝 License
+
+## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/Bass-Lab/dsRNAscan/issues)
 - **Documentation**: [GitHub Wiki](https://github.com/Bass-Lab/dsRNAscan/wiki)
@@ -225,7 +164,6 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 - EMBOSS team for the einverted tool
 - ViennaRNA team for RNA folding algorithms
-- All contributors to the project
 
 ---
 **Note**: This tool is for research purposes. Ensure you understand the parameters for your specific use case.
