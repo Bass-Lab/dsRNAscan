@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dsrnascan"
-version = "0.3.2"
+version = "0.3.6"
 description = "A tool for genome-wide prediction of double-stranded RNA structures"
 readme = "README.md"
 authors = [
@@ -46,6 +46,7 @@ dev = [
 
 [project.scripts]
 dsrnascan = "dsrnascan:main"
+dsrna-browse = "dsrnascan.browse_results:main"
 # dsrnascan-mpi = "dsrnascan_mpi:main"  # Uncomment when module is renamed
 
 [project.urls]

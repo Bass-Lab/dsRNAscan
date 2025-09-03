@@ -2,10 +2,9 @@
 """
 dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
-Version: 0.3.0
 """
 
-__version__ = '0.3.0'
+__version__ = '0.3.4'
 __author__ = 'Bass Lab'
 
 import os
@@ -21,8 +20,11 @@ import numpy as np
 import pandas as pd
 import multiprocessing
 import gzip
+import logging
 from datetime import datetime
 from queue import Empty
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+import time
 
 # Set environment variables for locale
 os.environ['LC_ALL'] = 'C.UTF-8'
@@ -269,11 +271,12 @@ def predict_hybridization(seq1, seq2, temperature=37):
         temperature (int): Folding temperature in Celsius (default 37)
     
     Returns:
-        str: Formatted output string compatible with parse_rnaduplex_output
+        tuple: (structure, indices_seq1, indices_seq2, energy) or (None, None, None, None) on error
     """
     try:
-        # Set temperature for ViennaRNA
-        RNA.cvar.temperature = temperature
+        # Set temperature for ViennaRNA only if different
+        if RNA.cvar.temperature != temperature:
+            RNA.cvar.temperature = temperature
         
         # Calculate duplex using Python bindings
         result = RNA.duplexfold(seq1, seq2)
@@ -282,7 +285,7 @@ def predict_hybridization(seq1, seq2, temperature=37):
         structure_parts = result.structure.split('&')
         if len(structure_parts) != 2:
             print(f"Warning: Invalid duplex structure: {result.structure}")
-            return ""
+            return None, None, None, None
         
         len1 = len(structure_parts[0])
         len2 = len(structure_parts[1])
@@ -295,26 +298,88 @@ def predict_hybridization(seq1, seq2, temperature=37):
         seq2_start = result.j
         seq2_end = result.j + len2 - 1
         
-        # Format output to match CLI format for compatibility with parse_rnaduplex_output
-        # Format: "structure   seq1_start,seq1_end  :  seq2_start,seq2_end  (energy)"
-        output = f"{result.structure}   {seq1_start},{seq1_end}  :  {seq2_start},{seq2_end}  ({result.energy:.2f})"
+        # Return data directly - no need to format and parse
+        indices_seq1 = [seq1_start, seq1_end]
+        indices_seq2 = [seq2_start, seq2_end]
         
-        return output
+        return result.structure, indices_seq1, indices_seq2, result.energy
         
     except ImportError:
         print("Error: RNA module not found. Please install ViennaRNA Python bindings.")
         print("Install with: conda install -c bioconda viennarna")
-        return ""
+        return None, None, None, None
     except Exception as e:
         print(f"Error running RNAduplex Python bindings: {str(e)}")
-        return ""
+        return None, None, None, None
+
+def predict_hybridization_batch(seq_pairs, temperature=37, max_workers=4):
+    """
+    Process multiple sequence pairs in parallel using threading.
+    
+    Args:
+        seq_pairs: List of tuples (seq1, seq2)
+        temperature: Folding temperature
+        max_workers: Number of threads to use
+    
+    Returns:
+        List of tuples (structure, indices_seq1, indices_seq2, energy) maintaining the same order as input
+    """
+    # Set temperature once for all threads
+    if RNA.cvar.temperature != temperature:
+        RNA.cvar.temperature = temperature
+    
+    def process_single_pair(pair_data):
+        """Process a single pair in a thread"""
+        seq1, seq2, idx = pair_data
+        try:
+            result = RNA.duplexfold(seq1, seq2)
+            
+            # Parse structure
+            structure_parts = result.structure.split('&')
+            if len(structure_parts) != 2:
+                return idx, (None, None, None, None)
+            
+            len1 = len(structure_parts[0])
+            len2 = len(structure_parts[1])
+            
+            seq1_start = result.i - len1 + 1
+            seq1_end = result.i
+            seq2_start = result.j
+            seq2_end = result.j + len2 - 1
+            
+            # Return data directly
+            indices_seq1 = [seq1_start, seq1_end]
+            indices_seq2 = [seq2_start, seq2_end]
+            
+            return idx, (result.structure, indices_seq1, indices_seq2, result.energy)
+        except Exception as e:
+            print(f"Error in batch RNAduplex for pair {idx}: {e}")
+            return idx, (None, None, None, None)
+    
+    # Prepare data with indices
+    indexed_pairs = [(seq1, seq2, i) for i, (seq1, seq2) in enumerate(seq_pairs)]
+    
+    # Process in parallel using threads
+    results = [None] * len(seq_pairs)
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(process_single_pair, pair): pair[2] 
+                  for pair in indexed_pairs}
+        
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                result_idx, result_data = future.result()
+                results[result_idx] = result_data
+            except Exception as e:
+                print(f"Error getting result for pair {idx}: {e}")
+                results[idx] = (None, None, None, None)
+    
+    return results
 
 def parse_rnaduplex_output(output):
     """
     Parse the output from RNAduplex.
-    
-    Example output: "(((...)))&(((...)))  1,9 : 3,11  (-10.40)"
-    
     Args:
         output (str): Output string from RNAduplex
     
@@ -425,7 +490,6 @@ def result_writer(output_file, result_queue, num_workers):
         f.write("Chromosome\tStrand\ti_start\ti_end\tj_start\tj_end\t"
                 "Score\tRawMatch\tPercMatch\tGaps\t"
                 "dG(kcal/mol)\tpercent_paired\tlongest_helix\t"
-                "orig_arm_length\teff_arm_length\t"
                 "eff_i_start\teff_i_end\teff_j_start\teff_j_end\t"
                 "i_seq\tj_seq\tstructure\n")
         
@@ -459,7 +523,6 @@ def result_writer(output_file, result_queue, num_workers):
                        f"{result['score']}\t{result['raw_match']}\t"
                        f"{result['match_perc']}\t{result['gap_numb']}\t"
                        f"{result['energy']}\t{result['percent_paired']}\t{result['longest_helix']}\t"
-                       f"{result['orig_arm_length']}\t{result['eff_arm_length']}\t"
                        f"{result['eff_i_start']}\t{result['eff_i_end']}\t"
                        f"{result['eff_j_start']}\t{result['eff_j_end']}\t"
                        f"{result['i_seq']}\t{result['j_seq']}\t"
@@ -488,7 +551,7 @@ def process_window(i, window_start, window_size, basename, algorithm, args, full
         basename: Base name for output files
         algorithm: Algorithm to use (einverted)
         args: Command line arguments
-        full_sequence: The complete sequence string (already reverse complemented if needed)
+        full_sequence: The complete sequence string (already complemented if needed)
         chromosome: Chromosome name
         strand: Strand (+ or -)
         result_queue: Queue for results
@@ -521,7 +584,7 @@ def process_window(i, window_start, window_size, basename, algorithm, args, full
             "-maxrepeat", str(args.max_span),
             "-outfile", "stdout",  # Write to stdout
             "-outseq", "/dev/null",  # Suppress sequence output file
-            "-filter"
+            "-filter" # Presumably needed for proper stdin/stdout handling but not tested
         ]
         
         # Create FASTA input for stdin
@@ -535,7 +598,12 @@ def process_window(i, window_start, window_size, basename, algorithm, args, full
         stdout, stderr = process.communicate(input=stdin_input)
         
         ein_results = stdout.split("\n")
-        results = parse_einverted_results(ein_results, window_start, window_size, basename, args, chromosome, strand)
+        
+        # Use batched or regular processing based on command-line flag
+        if args.batch:
+            results = parse_einverted_results_batched(ein_results, window_start, window_size, basename, args, chromosome, strand)
+        else:
+            results = parse_einverted_results(ein_results, window_start, window_size, basename, args, chromosome, strand)
         
         # Put results in queue for streaming to writer
         for result in results:
@@ -544,6 +612,176 @@ def process_window(i, window_start, window_size, basename, algorithm, args, full
     # Signal this worker is done with this window
     return len(results)
         
+def parse_einverted_results_batched(ein_results, window_start, window_size, basename, args, chromosome, strand):
+    """Parse results from einverted using batched RNAduplex processing for better performance"""
+    
+    # Phase 1: Collect all einverted results and sequences
+    einverted_entries = []
+    sequence_pairs = []
+    seq_pair_to_indices = {}  # Map sequence pairs to their indices in einverted_entries
+    
+    j = 0
+    while j < len(ein_results) - 1:
+        if j + 4 >= len(ein_results):
+            break
+            
+        try:
+            score_line = ein_results[j + 1].split()
+            seq_i_full = ein_results[j + 2].split()
+            seq_j_full = ein_results[j + 4].split()
+            
+            # Skip if we don't have enough data
+            if len(score_line) < 4 or len(seq_i_full) < 3 or len(seq_j_full) < 3:
+                j += 5
+                continue
+                
+            # Extract basic info
+            score = score_line[2].rstrip(':')
+            raw_match = score_line[3]
+            matches, total = map(int, raw_match.split('/'))
+            match_perc = round((matches / total) * 100, 2)
+            gap_numb = score_line[-2]
+            
+            # Early filter - skip if below cutoff
+            if match_perc < args.paired_cutoff:
+                j += 5
+                continue
+            
+            # Calculate genomic coordinates
+            i_start = int(seq_i_full[0]) + window_start
+            i_end = int(seq_i_full[2]) + window_start
+            j_start = int(seq_j_full[2]) + window_start
+            j_end = int(seq_j_full[0]) + window_start
+            
+            # Fix coordinate order if needed
+            if i_start > i_end or j_start > j_end or i_start > j_start or i_end > j_end:
+                coords = sorted([i_start, i_end, j_start, j_end])
+                i_start, i_end, j_start, j_end = coords[0], coords[1], coords[2], coords[3]
+            
+            # Extract sequences
+            i_seq = seq_i_full[1].replace("-", "").upper()
+            j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
+            
+            # Store einverted entry
+            entry_index = len(einverted_entries)
+            einverted_entries.append({
+                'score': score,
+                'raw_match': raw_match,
+                'match_perc': match_perc,
+                'gap_numb': gap_numb,
+                'i_start': i_start,
+                'i_end': i_end,
+                'j_start': j_start,
+                'j_end': j_end,
+                'i_seq': i_seq,
+                'j_seq': j_seq
+            })
+            
+            # Create sequence pair key for deduplication
+            seq_pair_key = (i_seq, j_seq)
+            
+            # Track which entries use this sequence pair
+            if seq_pair_key not in seq_pair_to_indices:
+                seq_pair_to_indices[seq_pair_key] = []
+                sequence_pairs.append(seq_pair_key)
+            seq_pair_to_indices[seq_pair_key].append(entry_index)
+            
+        except Exception as e:
+            print(f"Error processing einverted result at index {j}: {str(e)}")
+        
+        j += 5
+    
+    if not einverted_entries:
+        return []
+    
+    # Only show deduplication info if we saved significant calls
+    if len(einverted_entries) - len(sequence_pairs) > 0:
+        print(f"  Batching {len(sequence_pairs)} unique sequence pairs (saved {len(einverted_entries) - len(sequence_pairs)} duplicate RNAduplex calls)")
+    
+    # Phase 2: Batch process unique sequence pairs through RNAduplex
+    # Determine optimal number of workers based on number of pairs
+    num_workers = min(8, max(2, len(sequence_pairs) // 10))
+    
+    # Batch process all unique pairs
+    rnaduplex_results = predict_hybridization_batch(sequence_pairs, temperature=args.t, max_workers=num_workers)
+    
+    # Create a map from sequence pair to RNAduplex result
+    seq_pair_to_result = {}
+    for i, seq_pair in enumerate(sequence_pairs):
+        seq_pair_to_result[seq_pair] = rnaduplex_results[i]
+    
+    # Phase 3: Build final results by mapping RNAduplex results back to einverted entries
+    results = []
+    
+    for entry in einverted_entries:
+        seq_pair_key = (entry['i_seq'], entry['j_seq'])
+        structure, indices_seq1, indices_seq2, energy = seq_pair_to_result[seq_pair_key]
+        
+        # Skip if RNAduplex failed
+        if structure is None:
+            continue
+        
+        # Calculate effective coordinates based on RNAduplex trimming
+        if strand == "-":
+            # Reverse strand coordinate adjustment
+            # For reverse strand, swap which end gets trimmed
+            i_seq_len = len(entry['i_seq'])
+            j_seq_len = len(entry['j_seq'])
+            
+            # Swap the trimming: trim from end of start and beginning of end
+            eff_i_start = entry['i_start'] + (indices_seq1[0] - 1)
+            eff_i_end = entry['i_start'] + indices_seq1[1] - 1
+            eff_j_start = entry['j_start'] + (indices_seq2[0] - 1)  
+            eff_j_end = entry['j_start'] + indices_seq2[1] - 1
+        else:
+            # Forward strand
+            eff_i_start = entry['i_start'] + (indices_seq1[0] - 1)
+            eff_i_end = entry['i_start'] + indices_seq1[1] - 1
+            eff_j_start = entry['j_start'] + (indices_seq2[0] - 1)
+            eff_j_end = entry['j_start'] + indices_seq2[1] - 1
+        
+        # Calculate metrics
+        pairs = int(structure.count('(') * 2)
+        percent_paired = round(float(pairs / (len(structure) - 1)) * 100, 2)
+        longest_helix = find_longest_helix(structure)
+        
+        # Check if structure meets minimum base pair requirement (if set)
+        actual_bp = structure.count('(')
+        if args.min_bp > 0 and actual_bp < args.min_bp:
+            if hasattr(args, 'verbose') and args.verbose:
+                print(f"  Skipping structure at {i_start}-{j_end}: only {actual_bp} bp (min: {args.min_bp})")
+            continue
+        
+        # Create result
+        result = {
+            'chromosome': chromosome,
+            'strand': strand,
+            'score': entry['score'],
+            'raw_match': entry['raw_match'],
+            'match_perc': entry['match_perc'],
+            'gap_numb': entry['gap_numb'],
+            'i_start': entry['i_start'],
+            'i_end': entry['i_end'],
+            'j_start': entry['j_start'],
+            'j_end': entry['j_end'],
+            'eff_i_start': eff_i_start,
+            'eff_i_end': eff_i_end,
+            'eff_j_start': eff_j_start,
+            'eff_j_end': eff_j_end,
+            # Extract the actual subsequences used by RNAduplex and convert T to U
+            'i_seq': entry['i_seq'][indices_seq1[0]-1:indices_seq1[1]].replace("T", "U"),
+            'j_seq': entry['j_seq'][indices_seq2[0]-1:indices_seq2[1]].replace("T", "U"),
+            'structure': structure,
+            'energy': energy,
+            'base_pairs': actual_bp,
+            'percent_paired': percent_paired,
+            'longest_helix': longest_helix,
+        }
+        
+        results.append(result)
+    
+    return results
+
 def parse_einverted_results(ein_results, window_start, window_size, basename, args, chromosome, strand):
     """Parse results from einverted and return as list of result dictionaries"""
     results = []
@@ -578,7 +816,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             
             # Calculate the genomic coordinates from einverted output
             # For both strands, we maintain the same coordinate system
-            # The only difference is the sequence content (reverse complement for negative strand)
+            # The only difference is the sequence content (complement for negative strand)
             i_start = int(seq_i_full[0]) + window_start
             i_end = int(seq_i_full[2]) + window_start
             j_start = int(seq_j_full[2]) + window_start
@@ -594,11 +832,12 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             # Extract sequences from einverted output
             i_seq = seq_i_full[1].replace("-", "").upper()
             j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
-            output = predict_hybridization(i_seq, j_seq, temperature=args.t)
-            structure, indices_seq1, indices_seq2, energy = parse_rnaduplex_output(output)
+            
+            # Get RNAduplex results directly - no need to format and parse
+            structure, indices_seq1, indices_seq2, energy = predict_hybridization(i_seq, j_seq, temperature=args.t)
             
             # Skip if we got empty results from RNAduplex
-            if not structure:
+            if structure is None:
                 j += 5
                 continue
                 
@@ -609,8 +848,8 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             # Calculate effective coordinates based on RNAduplex trimming
             # RNAduplex returns 1-based indices for the portions of sequences that form the duplex
             if strand == "-":
-                # For reverse strand, the sequences are reverse complemented
-                # RNAduplex indices are from the start of the RC sequences
+                # For reverse strand, the sequences are complemented
+                # RNAduplex indices are from the start of the complemented sequences
                 # We need to adjust for the fact that trimming from the start of RC seq
                 # is actually trimming from the end in genomic coordinates
                 
@@ -662,7 +901,7 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             
             # Calculate percent_paired safely
             try:
-                percent_paired = round(float(pairs / (len(structure) - 1)) * 100, 2)
+                percent_paired = round(float(pairs / (len(structure) - 1)) * 100, 2) # -1 to accoutn for the ampersand
             except (ZeroDivisionError, ValueError):
                 percent_paired = 0
             
@@ -670,8 +909,6 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
             longest_helix = find_longest_helix(structure)
             
             # Calculate arm lengths
-            orig_arm_length = (i_end - i_start + 1)  # Should be same as (j_end - j_start + 1)
-            eff_arm_length = (eff_i[1] - eff_i[0] + 1)  # Should be same as (eff_j[1] - eff_j[0] + 1)
             
             if match_perc < args.paired_cutoff:
                 print(f"Skipping {i_start} to {j_end} due to low percentage of pairs: {percent_paired}")
@@ -704,8 +941,6 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
                 'energy': energy,
                 'percent_paired': percent_paired,
                 'longest_helix': longest_helix,
-                'orig_arm_length': orig_arm_length,
-                'eff_arm_length': eff_arm_length
             }
             results.append(result)
         except Exception as e:
@@ -716,15 +951,26 @@ def parse_einverted_results(ein_results, window_start, window_size, basename, ar
     
     return results
 
+def count_base_pairs(structure):
+    """Count actual base pairs in a structure string"""
+    if not structure:
+        return 0
+    # Count '(' characters (each represents a base pair)
+    # Don't double count - just count one side
+    return structure.count('(')
+
 def find_longest_helix(structure):
     """
     Find the longest stretch of contiguous base pairs in an RNA structure.
     
+    This version properly matches corresponding positions in both arms.
+    A helix is only continuous if BOTH arms have pairs at corresponding positions.
+    
     Args:
-        structure (str): String representing RNA structure (e.g., "(((...)))&(((...)))")
+        structure (str): String representing RNA structure (e.g., "((((((&))).)))")
         
     Returns:
-        int: Length of the longest contiguous helix (minimum of both arms)
+        int: Length of the longest contiguous helix
     """
     try:
         # Handle invalid or empty structures
@@ -738,31 +984,849 @@ def find_longest_helix(structure):
             
         left_arm, right_arm = parts[0], parts[1]
         
-        # Find longest stretch of opening brackets "(" in left arm
-        left_max = 0
-        current_left = 0
-        for char in left_arm:
-            if char == "(":
-                current_left += 1
-                left_max = max(left_max, current_left)
+        # The arms should be the same length for a valid duplex
+        if len(left_arm) != len(right_arm):
+            # If arms are different lengths, use the shorter one
+            min_len = min(len(left_arm), len(right_arm))
+            left_arm = left_arm[:min_len]
+            right_arm = right_arm[:min_len]
+        
+        # Create a paired array - True where both positions form a pair
+        # In RNAduplex notation:
+        # - position i in left arm pairs with position (n-1-i) in right arm
+        # - '(' in left should correspond to ')' at the mirrored position in right
+        n = len(left_arm)
+        paired = []
+        
+        for i in range(n):
+            # Check if position i in left arm pairs with position n-1-i in right arm
+            left_char = left_arm[i]
+            right_char = right_arm[n - 1 - i]
+            
+            # Both must be paired (not '.') for this position to be part of a helix
+            is_paired = (left_char == '(' and right_char == ')')
+            paired.append(is_paired)
+        
+        # Now find the longest continuous stretch of True values
+        max_helix = 0
+        current_helix = 0
+        
+        for is_paired in paired:
+            if is_paired:
+                current_helix += 1
+                max_helix = max(max_helix, current_helix)
             else:
-                current_left = 0
-                
-        # Find longest stretch of closing brackets ")" in right arm
-        right_max = 0
-        current_right = 0
-        for char in right_arm:
-            if char == ")":
-                current_right += 1
-                right_max = max(right_max, current_right)
-            else:
-                current_right = 0
-                
-        # Return the minimum of the two arms (since a helix requires both sides)
-        return min(left_max, right_max)
+                current_helix = 0
+        
+        return max_helix
+        
     except Exception as e:
         print(f"Error calculating longest helix: {e}")
         return 0
+
+# ==============================================================================
+# DataFrame Processing Classes and Functions
+# ==============================================================================
+
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    import psutil
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+def process_sequence_einverted(row_data):
+    """Process a single sequence through einverted (top-level function for pickling)"""
+    import subprocess  # Import here for pickling
+    row, einverted_bin, args = row_data
+    results = []
+    
+    # Run einverted
+    stdin_input = f">{row['seq_hash']}\n{row['sequence']}\n"
+    
+    # CRITICAL: Set maxrepeat to allow searching the entire window
+    # Use max_span if specified and larger than window, otherwise use window size
+    window_size = len(row['sequence'])  # Use actual sequence length as max
+    if hasattr(args, 'max_span') and args.max_span is not None:
+        max_repeat = max(window_size, args.max_span)
+    else:
+        max_repeat = window_size
+    
+    cmd = [
+        einverted_bin,
+        "-sequence", "stdin",
+        "-gap", str(args.gap),
+        "-threshold", str(args.score),
+        "-match", str(args.match),
+        "-mismatch", str(args.mismatch),
+        "-maxrepeat", str(max_repeat),  # Set to window size to search entire window
+        "-outfile", "stdout",
+        "-outseq", "/dev/null"
+    ]
+    
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = process.communicate(input=stdin_input)
+            
+        # Parse einverted output
+        lines = stdout.split('\n')
+        
+        j = 0
+        # Changed: Process ALL lines, not just len(lines) - 4
+        while j < len(lines):
+            # Skip empty lines
+            if not lines[j] or j + 3 >= len(lines):
+                j += 1
+                continue
+                
+            # Look for lines starting with our seq_hash
+            # Format: "seq_hash: Score 49: 51/68 ( 75%) matches, 3 gaps"
+            if lines[j].startswith(row['seq_hash'] + ':'):
+                # The score info is on the same line as the sequence ID
+                score_line = lines[j].split()
+                seq_i_full = lines[j + 1].split()
+                seq_j_full = lines[j + 3].split()
+                
+                if len(score_line) >= 4 and len(seq_i_full) >= 3 and len(seq_j_full) >= 3:
+                    score = score_line[2].rstrip(':')
+                    raw_match = score_line[3]
+                    matches, total = map(int, raw_match.split('/'))
+                    match_perc = round((matches / total) * 100, 2)
+                    
+                    # Extract gap count from the score line
+                    gap_numb = 0
+                    for i, part in enumerate(score_line):
+                        if 'gap' in part.lower():
+                            if i > 0 and score_line[i-1].isdigit():
+                                gap_numb = int(score_line[i-1])
+                            break
+                    
+                    # Local coordinates within the window
+                    i_start_local = int(seq_i_full[0])
+                    i_end_local = int(seq_i_full[2])
+                    j_start_local = int(seq_j_full[2])
+                    j_end_local = int(seq_j_full[0])
+                    
+                    # Extract sequences for RNAduplex
+                    i_seq = seq_i_full[1].replace("-", "").upper()
+                    j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
+                    
+                    # For reverse strand, we need to reverse the sequences
+                    # This is because einverted reports them in the original orientation
+                    # but we need them in the reverse orientation for proper pairing
+                    if row.get('strand', '+') == '-':
+                        i_seq = i_seq[::-1]
+                        j_seq = j_seq[::-1]
+
+                    results.append({
+                        'seq_hash': row['seq_hash'],
+                        'strand': row.get('strand', '+'),  # Keep strand info
+                        'i_start_local': i_start_local,
+                        'i_end_local': i_end_local,
+                        'j_start_local': j_start_local,
+                        'j_end_local': j_end_local,
+                        'score': score,
+                        'raw_match': raw_match,  # Store the actual match ratio
+                        'match_perc': match_perc,
+                        'gap_numb': gap_numb,  # Store the gap count
+                        'i_seq': i_seq,
+                        'j_seq': j_seq
+                    })
+                
+                # Move to next potential result (einverted results are typically 5 lines)
+                # But we'll keep checking line by line to not miss anything
+                j += 4  # Skip the 4 lines we just processed, will increment by 1 in next iteration
+            else:
+                j += 1
+                
+    except Exception as e:
+        print(f"Error processing sequence {row['seq_hash']}: {e}")
+    
+    return results
+
+class ChunkedDsRNAProcessor:
+    """Process dsRNAs in memory-efficient chunks"""
+    
+    def __init__(self, chunk_size=10000, both_strands=True, reverse_only=False, verbose=True):
+        """
+        Args:
+            chunk_size: Maximum windows to process at once
+            both_strands: Process both strands (True) or single strand (False)
+            reverse_only: If single strand, process reverse instead of forward
+            verbose: Print progress messages
+        """
+        import logging
+        self.chunk_size = chunk_size
+        self.both_strands = both_strands
+        self.reverse_only = reverse_only
+        self.verbose = verbose
+        self.all_results = []
+        self.logger = logging.getLogger(__name__)
+    
+    def log(self, message, level='info'):
+        """Output message to both console and log file"""
+        # No need to print separately - logger handles both console and file
+        if level == 'info':
+            self.logger.info(message)
+        elif level == 'warning':
+            self.logger.warning(message)
+        elif level == 'error':
+            self.logger.error(message)
+        
+    def extract_windows_chunk(self, sequence, chromosome, strand, window_size, step_size, start_pos=0):
+        """Extract a chunk of windows from a sequence"""
+        import hashlib
+        windows = []
+        seq_len = len(sequence)
+        
+        # Calculate chunk boundaries
+        chunk_end_pos = min(start_pos + self.chunk_size * step_size, seq_len)
+        
+        for start in range(start_pos, chunk_end_pos, step_size):
+            end = min(start + window_size, seq_len)
+            window_seq = sequence[start:end]
+            
+            # Skip windows that are too short or all N's
+            if len(window_seq) < 100 or window_seq == 'N' * len(window_seq):
+                continue
+            
+            # Create hash of sequence for fast deduplication
+            seq_hash = hashlib.md5(window_seq.encode()).hexdigest()
+            
+            windows.append({
+                'chromosome': chromosome,
+                'strand': strand,
+                'window_start': start,
+                'window_end': end,
+                'sequence': window_seq,
+                'seq_hash': seq_hash,
+                'seq_length': len(window_seq)
+            })
+        
+        return pd.DataFrame(windows), chunk_end_pos >= seq_len
+    
+    def process_chunk(self, windows_df, coord_map, einverted_bin, args, region_offset=0, seq_len=None):
+        """Process a single chunk of windows
+        
+        Args:
+            windows_df: DataFrame with window information
+            coord_map: Mapping of sequence hashes to genomic locations
+            einverted_bin: Path to einverted binary
+            args: Command line arguments
+            region_offset: Offset for region extraction
+            seq_len: Total length of the genomic sequence (needed for reverse strand)
+        """
+        
+        # Process all windows (no deduplication at window level)
+        # Deduplication happens after einverted to avoid redundant dsRNA processing
+        unique_df = windows_df.reset_index(drop=True)
+        
+        if self.verbose:
+            self.log(f"    Chunk: {len(windows_df)} windows")
+        
+        # Run einverted on all windows
+        einverted_results = self.run_einverted_batch(unique_df, einverted_bin, args)
+        
+        if einverted_results.empty:
+            return pd.DataFrame()
+        
+        if self.verbose:
+            self.log(f"    Found {len(einverted_results)} inverted repeats from einverted")
+        
+        # Run RNAduplex (with deduplication of identical sequence pairs)
+        # Pass the CPU count for parallel processing
+        max_workers = args.c if hasattr(args, 'c') else args.cpus if hasattr(args, 'cpus') else 1
+        einverted_results = self.run_rnaduplex_batch(einverted_results, args.t, max_workers=max_workers)
+        
+        # Map back to genomic coordinates (with region offset if extracting a region)
+        results = self.map_to_genomic_coords(einverted_results, coord_map, region_offset, seq_len)
+        
+        return results
+    
+    def run_einverted_batch(self, sequences_df, einverted_bin, args):
+        """Run einverted on unique sequences in parallel"""
+        if sequences_df.empty:
+            return pd.DataFrame()
+            
+        # Prepare data for parallel processing
+        row_data = [(row, einverted_bin, args) for _, row in sequences_df.iterrows()]
+        
+        all_results = []
+        # Handle both 'c' and 'cpus' attribute names
+        max_workers = args.c if hasattr(args, 'c') else args.cpus
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(process_sequence_einverted, data): idx 
+                      for idx, data in enumerate(row_data)}
+            
+            for future in as_completed(futures):
+                try:
+                    results = future.result()
+                    all_results.extend(results)
+                except Exception as e:
+                    print(f"Error getting einverted results: {e}")
+        
+        return pd.DataFrame(all_results)
+    
+    def run_rnaduplex_batch(self, einverted_df, temperature=37, max_workers=None):
+        """Run RNAduplex on einverted results, deduplicating identical sequence pairs"""
+        if einverted_df.empty:
+            return einverted_df
+            
+        # Deduplicate identical einverted results before RNAduplex
+        # Keep only the first occurrence of each unique combination
+        total_before = len(einverted_df)
+        einverted_df = einverted_df.drop_duplicates(
+            subset=['seq_hash', 'strand', 'i_start_local', 'i_end_local', 
+                    'j_start_local', 'j_end_local', 'i_seq', 'j_seq'],
+            keep='first'
+        )
+        total_after = len(einverted_df)
+        
+        if self.verbose:
+            if total_before > total_after:
+                self.log(f"    Deduplicated {total_before} → {total_after} unique inverted repeats")
+            self.log(f"    Processing {total_after} inverted repeats through RNAduplex")
+        
+        # Set temperature
+        RNA.cvar.temperature = temperature
+        
+        # Define a function to process a single row
+        def process_rnaduplex_row(row):
+            """Process a single einverted result through RNAduplex"""
+            try:
+                result = RNA.duplexfold(row['i_seq'], row['j_seq'])
+                
+                structure_parts = result.structure.split('&')
+                if len(structure_parts) == 2:
+                    len1 = len(structure_parts[0])
+                    len2 = len(structure_parts[1])
+                    
+                    return pd.Series({
+                        'structure': result.structure,
+                        'energy': result.energy,
+                        'i_trim_start': result.i - len1 + 1,
+                        'i_trim_end': result.i,
+                        'j_trim_start': result.j,
+                        'j_trim_end': result.j + len2 - 1
+                    })
+                else:
+                    return pd.Series({
+                        'structure': None,
+                        'energy': None,
+                        'i_trim_start': None,
+                        'i_trim_end': None,
+                        'j_trim_start': None,
+                        'j_trim_end': None
+                    })
+            except:
+                return pd.Series({
+                    'structure': None,
+                    'energy': None,
+                    'i_trim_start': None,
+                    'i_trim_end': None,
+                    'j_trim_start': None,
+                    'j_trim_end': None
+                })
+        
+        # Apply RNAduplex processing with parallel execution if we have multiple workers
+        if max_workers and max_workers > 1 and len(einverted_df) > 10:
+            # Use concurrent.futures for parallel processing
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # Split dataframe into chunks for parallel processing
+            n_chunks = min(max_workers, len(einverted_df))
+            chunk_size = len(einverted_df) // n_chunks
+            chunks = []
+            for i in range(n_chunks):
+                start_idx = i * chunk_size
+                if i == n_chunks - 1:
+                    # Last chunk gets any remaining rows
+                    chunks.append(einverted_df.iloc[start_idx:])
+                else:
+                    chunks.append(einverted_df.iloc[start_idx:start_idx + chunk_size])
+            
+            # Process chunks in parallel
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(lambda chunk: chunk.apply(process_rnaduplex_row, axis=1), chunk) 
+                          for chunk in chunks]
+                
+                # Collect results
+                results = []
+                for future in futures:
+                    results.append(future.result())
+                
+                # Combine results
+                duplex_results = pd.concat(results, ignore_index=False)
+        else:
+            # For small datasets or single CPU, use regular apply
+            duplex_results = einverted_df.apply(process_rnaduplex_row, axis=1)
+        
+        # Merge the results back into the dataframe
+        for col in duplex_results.columns:
+            einverted_df[col] = duplex_results[col]
+        
+        # Drop entries where RNAduplex failed
+        einverted_df = einverted_df.dropna(subset=['structure'])
+        
+        return einverted_df
+    
+    def find_longest_helix(self, structure):
+        """Find the longest consecutive helix in the structure"""
+        if not structure:
+            return 0
+        
+        # Split by '&' and take the first part (i-arm)
+        parts = structure.split('&')
+        if not parts:
+            return 0
+        
+        i_structure = parts[0]
+        
+        # Find longest consecutive run of '(' characters
+        max_helix = 0
+        current_helix = 0
+        
+        for char in i_structure:
+            if char == '(':
+                current_helix += 1
+                max_helix = max(max_helix, current_helix)
+            else:
+                current_helix = 0
+        
+        return max_helix
+    
+    def map_to_genomic_coords(self, einverted_df, coord_map, region_offset=0, seq_len=None):
+        """Map einverted results to genomic coordinates
+        
+        Args:
+            einverted_df: DataFrame with einverted results
+            coord_map: Mapping of sequence hashes to genomic locations
+            region_offset: Offset for region extraction
+            seq_len: Total length of the genomic sequence (needed for reverse strand conversion)
+        """
+        final_results = []
+        
+        for _, row in einverted_df.iterrows():
+            # Get all genomic locations for this sequence
+            locations = coord_map[row['seq_hash']]
+            
+            for loc in locations:
+                # Convert local coordinates to genomic coordinates
+                # Since we're only complementing (not reverse complementing),
+                # coordinates are straightforward for both strands
+                # window_start (loc['start']) is 0-based from Python
+                # einverted coordinates (i_start_local, etc) are 1-based
+                # We want 1-based genomic coordinates for output
+                result = {
+                    'chromosome': loc['chromosome'],
+                    'strand': loc['strand'],
+                    'i_start': loc['start'] + row['i_start_local'] + region_offset,
+                    'i_end': loc['start'] + row['i_end_local'] + region_offset,
+                    'j_start': loc['start'] + row['j_start_local'] + region_offset,
+                    'j_end': loc['start'] + row['j_end_local'] + region_offset,
+                    'score': row['score'],
+                    'raw_match': row.get('raw_match', '0/0'),
+                    'match_perc': row['match_perc'],
+                    'gap_numb': row.get('gap_numb', 0),
+                    'structure': row['structure'],
+                    'energy': row['energy'],
+                    'i_seq': row['i_seq'],  # Keep full sequence for now
+                    'j_seq': row['j_seq']   # Keep full sequence for now
+                }
+                
+                
+                # Calculate effective coordinates (already includes region_offset)
+                # RNAduplex trim positions are 1-based within the sequences
+                if row['strand'] == '-':
+                    # For reverse strand, sequences are reversed before RNAduplex
+                    # So indices need to be mapped back from reversed orientation
+                    result['eff_i_start'] = result['i_end'] - row['i_trim_end'] + 1
+                    result['eff_i_end'] = result['i_end'] - row['i_trim_start'] + 1
+                    result['eff_j_start'] = result['j_end'] - row['j_trim_end'] + 1
+                    result['eff_j_end'] = result['j_end'] - row['j_trim_start'] + 1
+                else:
+                    # Forward strand - standard calculation
+                    result['eff_i_start'] = result['i_start'] + row['i_trim_start'] - 1
+                    result['eff_i_end'] = result['i_start'] + row['i_trim_end'] - 1
+                    result['eff_j_start'] = result['j_start'] + row['j_trim_start'] - 1
+                    result['eff_j_end'] = result['j_start'] + row['j_trim_end'] - 1
+                
+                
+                # Calculate longest helix
+                result['longest_helix'] = self.find_longest_helix(row['structure'])
+                
+                # Trim the sequences based on RNAduplex positions
+                # The sequences are already in 5' to 3' orientation from einverted processing
+                # Make sure indices are integers (they might be floats or None)
+                if pd.notna(row.get('i_trim_start')) and pd.notna(row.get('i_trim_end')):
+                    i_trim_start = int(row['i_trim_start']) - 1
+                    i_trim_end = int(row['i_trim_end'])
+                    j_trim_start = int(row['j_trim_start']) - 1
+                    j_trim_end = int(row['j_trim_end'])
+                    
+                    # Apply trimming and convert T to U for RNA
+                    result['i_seq'] = row['i_seq'][i_trim_start:i_trim_end].replace('T', 'U')
+                    result['j_seq'] = row['j_seq'][j_trim_start:j_trim_end].replace('T', 'U')
+                else:
+                    # No trimming available, use full sequences
+                    result['i_seq'] = row['i_seq'].replace('T', 'U')
+                    result['j_seq'] = row['j_seq'].replace('T', 'U')
+                
+                final_results.append(result)
+        
+        return pd.DataFrame(final_results)
+    
+    def eliminate_nested_dsrnas(self, results_df):
+        """
+        Remove dsRNAs that are completely contained within others.
+        A dsRNA is considered nested ONLY if BOTH arms are within the corresponding arms
+        of another dsRNA (i.e., using identical sequences but shorter on both sides).
+        Uses vectorized numpy operations for better performance.
+        """
+        if results_df.empty:
+            return results_df
+        
+        # Sort by chromosome, strand, and i_start
+        results_df = results_df.sort_values(['chromosome', 'strand', 'i_start'])
+        
+        # Track which indices to keep
+        keep_mask = np.ones(len(results_df), dtype=bool)
+        total_nested = 0
+        
+        # Process each chromosome-strand group
+        for (chrom, strand), group in results_df.groupby(['chromosome', 'strand']):
+            if len(group) <= 1:
+                continue
+                
+            # Get coordinates as numpy arrays for vectorized operations
+            group_idx = group.index.to_numpy()
+            i_starts = group['i_start'].to_numpy()
+            i_ends = group['i_end'].to_numpy()
+            j_starts = group['j_start'].to_numpy()
+            j_ends = group['j_end'].to_numpy()
+            
+            n = len(group)
+            
+            # Create broadcasting arrays for pairwise comparison
+            # Shape: (n, 1) vs (n,) -> (n, n) comparison matrix
+            i_starts_i = i_starts[:, np.newaxis]
+            i_ends_i = i_ends[:, np.newaxis]
+            j_starts_i = j_starts[:, np.newaxis]
+            j_ends_i = j_ends[:, np.newaxis]
+            
+            # Check if a dsRNA is nested within another
+            # CRITICAL: A dsRNA is only considered nested if:
+            # - Its i-arm is within the other's i-arm (NOT j-arm)
+            # - AND its j-arm is within the other's j-arm (NOT i-arm)
+            # This preserves dsRNAs where both arms fall within just one arm of another structure
+            i_arm_nested = (
+                (i_starts >= i_starts_i) &  # current i_start >= other's i_start
+                (i_ends <= i_ends_i)         # current i_end <= other's i_end
+            )
+            
+            j_arm_nested = (
+                (j_starts >= j_starts_i) &  # current j_start >= other's j_start
+                (j_ends <= j_ends_i)         # current j_end <= other's j_end
+            )
+            
+            # A structure is nested only if BOTH arms are nested in their CORRESPONDING arms
+            is_nested = i_arm_nested & j_arm_nested
+            
+            # Set diagonal to False (element can't be nested within itself)
+            np.fill_diagonal(is_nested, False)
+            
+            # For exact duplicates (same coordinates), we need special handling
+            # Check if structures are identical (not just one within the other)
+            i_identical = (i_starts[:, np.newaxis] == i_starts) & (i_ends[:, np.newaxis] == i_ends)
+            j_identical = (j_starts[:, np.newaxis] == j_starts) & (j_ends[:, np.newaxis] == j_ends)
+            is_identical = i_identical & j_identical
+            np.fill_diagonal(is_identical, False)  # Don't compare with self
+            
+            # For identical pairs, only mark the later one as nested (keep the first occurrence)
+            # This is done by using upper triangular matrix only for identical pairs
+            is_nested_final = is_nested.copy()
+            for i in range(n):
+                for j in range(i + 1, n):  # Only check upper triangle
+                    if is_identical[i, j]:
+                        # If they're identical, mark j as nested (keep i)
+                        is_nested_final[i, j] = True
+                        is_nested_final[j, i] = False  # Don't mark i as nested
+            
+            # Find which elements are nested within any other element
+            nested_mask = is_nested_final.any(axis=0)
+            total_nested += nested_mask.sum()
+            
+            # Update the global keep mask
+            for idx, is_nested_item in zip(group_idx, nested_mask):
+                if is_nested_item:
+                    keep_mask[results_df.index.get_loc(idx)] = False
+        
+        if self.verbose and total_nested > 0:
+            self.log(f"  Removed {total_nested} nested dsRNAs (both arms contained within another on same strand)")
+        
+        return results_df[keep_mask]
+    
+    def eliminate_nested_dsrnas_original(self, results_df):
+        """
+        Original implementation with nested loops.
+        Kept as fallback for validation and small datasets.
+        A dsRNA is considered nested ONLY if BOTH arms are within the corresponding arms.
+        """
+        if results_df.empty:
+            return results_df
+            
+        # Sort by chromosome, strand, and i_start
+        results_df = results_df.sort_values(['chromosome', 'strand', 'i_start'])
+        
+        nested_indices = set()
+        
+        # Group by chromosome and strand
+        for (chr_strand), group in results_df.groupby(['chromosome', 'strand']):
+            group_indices = group.index.tolist()
+            
+            for i in range(len(group_indices)):
+                if group_indices[i] in nested_indices:
+                    continue
+                    
+                row_i = group.loc[group_indices[i]]
+                
+                for j in range(i + 1, len(group_indices)):
+                    if group_indices[j] in nested_indices:
+                        continue
+                        
+                    row_j = group.loc[group_indices[j]]
+                    
+                    # Check if row_j is nested within row_i 
+                    # CRITICAL: Both arms must be in CORRESPONDING arms (i in i, j in j)
+                    if (row_j['i_start'] >= row_i['i_start'] and 
+                        row_j['i_end'] <= row_i['i_end'] and
+                        row_j['j_start'] >= row_i['j_start'] and 
+                        row_j['j_end'] <= row_i['j_end']):
+                        nested_indices.add(group_indices[j])
+                    # Check if row_i is nested within row_j
+                    # CRITICAL: Both arms must be in CORRESPONDING arms (i in i, j in j)
+                    elif (row_i['i_start'] >= row_j['i_start'] and 
+                          row_i['i_end'] <= row_j['i_end'] and
+                          row_i['j_start'] >= row_j['j_start'] and 
+                          row_i['j_end'] <= row_j['j_end']):
+                        nested_indices.add(group_indices[i])
+                        break
+        
+        # Remove nested dsRNAs
+        filtered_df = results_df.drop(list(nested_indices))
+        
+        if self.verbose and len(nested_indices) > 0:
+            self.log(f"  Removed {len(nested_indices)} nested dsRNAs (both arms contained within another on same strand)")
+        
+        return filtered_df
+    
+    def process_fasta(self, fasta_file, einverted_bin, args):
+        """Main processing function with chunking"""
+        from Bio import SeqIO
+        import gzip
+        from collections import defaultdict
+        
+        self.log(f"Processing {fasta_file} with chunked DataFrame approach")
+        self.log(f"  Chunk size: {self.chunk_size} windows")
+        self.log(f"  Strands: {'both' if self.both_strands else ('reverse only' if self.reverse_only else 'forward only')}")
+        
+        # Handle region extraction if specified
+        if hasattr(args, 'chromosome') and args.chromosome:
+            self.log(f"  Extracting chromosome: {args.chromosome}")
+        if hasattr(args, 'start') and args.start > 0:
+            self.log(f"  Region: {args.start:,}-{args.end:,}" if args.end > 0 else f"  Start: {args.start:,}")
+        
+        start_time = time.time()
+        initial_memory = get_memory_usage()
+        
+        all_chunk_results = []
+        total_windows = 0
+        total_unique = 0
+        
+        # Open file (handle gzipped files)
+        if fasta_file.endswith('.gz'):
+            handle = gzip.open(fasta_file, 'rt')
+        else:
+            handle = open(fasta_file, 'rt')
+        
+        try:
+            for record in SeqIO.parse(handle, "fasta"):
+                chromosome = record.id
+                
+                # Skip if specific chromosome requested and this isn't it
+                if hasattr(args, 'chromosome') and args.chromosome and chromosome != args.chromosome:
+                    continue
+                
+                sequence = str(record.seq).upper()
+                
+                # Apply region extraction if specified
+                region_offset = 0  # Track offset for genomic coordinate mapping
+                if hasattr(args, 'start') and args.start > 0:
+                    start_pos = args.start - 1  # Convert to 0-based
+                    end_pos = args.end - 1 if args.end > 0 else len(sequence)
+                    sequence = sequence[start_pos:end_pos]
+                    region_offset = start_pos  # Store offset for coordinate adjustment
+                    self.log(f"  Extracted region: {len(sequence):,} bp from {chromosome}")
+                    # Keep original chromosome name for output
+                
+                if self.both_strands:
+                    strands = ['+', '-']
+                elif self.reverse_only:
+                    strands = ['-']
+                else:
+                    strands = ['+']
+                
+                for strand in strands:
+                    if strand == '-':
+                        # Just complement for negative strand (not reverse complement)
+                        # This keeps coordinates in the same orientation
+                        complement = str.maketrans('ATGC', 'TACG')
+                        seq_to_process = sequence.translate(complement)
+                    else:
+                        seq_to_process = sequence
+                    
+                    self.log(f"\nProcessing {chromosome} ({strand} strand)...")
+                    
+                    # Process in chunks
+                    chunk_num = 0
+                    position = 0
+                    
+                    while position < len(seq_to_process):
+                        chunk_num += 1
+                        
+                        # Extract chunk of windows
+                        # Handle both 's' and 'step' attribute names
+                        step_size = args.s if hasattr(args, 's') else args.step
+                        window_size = args.w if hasattr(args, 'w') else args.window
+                        
+                        windows_df, is_last = self.extract_windows_chunk(
+                            seq_to_process, chromosome, strand, 
+                            window_size, step_size, position
+                        )
+                        
+                        if windows_df.empty:
+                            break
+                        
+                        total_windows += len(windows_df)
+                        
+                        # Track coordinates for all windows
+                        coord_map = defaultdict(list)
+                        for _, row in windows_df.iterrows():
+                            coord_map[row['seq_hash']].append({
+                                'chromosome': row['chromosome'],
+                                'strand': row['strand'],
+                                'start': row['window_start'],
+                                'end': row['window_end']
+                            })
+                        
+                        # Process this chunk (pass region_offset for coordinate adjustment)
+                        # For reverse strand, we need to pass the original sequence length
+                        seq_len_for_mapping = len(seq_to_process) if strand == '-' else None
+                        chunk_results = self.process_chunk(windows_df, coord_map, einverted_bin, args, region_offset, seq_len_for_mapping)
+                        
+                        if not chunk_results.empty:
+                            all_chunk_results.append(chunk_results)
+                        
+                        # Memory check
+                        current_memory = get_memory_usage()
+                        if self.verbose and chunk_num % 5 == 0:
+                            self.log(f"    Memory usage: {current_memory:.1f} MB (delta: {current_memory - initial_memory:.1f} MB)")
+                        
+                        # Move to next chunk
+                        position += self.chunk_size * step_size
+                        
+                        if is_last:
+                            break
+        finally:
+            handle.close()
+        
+        # Combine all chunk results
+        if all_chunk_results:
+            all_results_df = pd.concat(all_chunk_results, ignore_index=True)
+            
+            # Deduplicate truly identical entries (same coordinates and sequences)
+            initial_count = len(all_results_df)
+            all_results_df = all_results_df.drop_duplicates(
+                subset=['chromosome', 'strand', 'i_start', 'i_end', 'j_start', 'j_end', 'i_seq', 'j_seq'],
+                keep='first'
+            )
+            deduplicated_count = initial_count - len(all_results_df)
+            if deduplicated_count > 0 and self.verbose:
+                self.log(f"\nRemoved {deduplicated_count} duplicate entries (identical coordinates and sequences)")
+            
+            # Eliminate nested dsRNAs across all results
+            self.log("\nEliminating nested dsRNAs...")
+            all_results_df = self.eliminate_nested_dsrnas(all_results_df)
+            
+            # Apply final filters
+            all_results_df['percent_paired'] = all_results_df['structure'].apply(
+                lambda x: round(x.count('(') * 2 / (len(x) - 1) * 100, 2) if x else 0
+            )
+            
+            # Calculate actual base pairs for filtering
+            all_results_df['base_pairs'] = all_results_df['structure'].apply(count_base_pairs)
+            
+            # Filter by minimum base pairs (if set)
+            initial_count = len(all_results_df)
+            
+            # Apply filters based on what's configured
+            filter_mask = (
+                (all_results_df['match_perc'] >= args.paired_cutoff) &
+                (all_results_df['percent_paired'] >= args.paired_cutoff)
+            )
+            
+            # Only apply min_bp filter if it's > 0
+            if args.min_bp > 0:
+                filter_mask = filter_mask & (all_results_df['base_pairs'] >= args.min_bp)
+            
+            all_results_df = all_results_df[filter_mask]
+            
+            filtered_count = initial_count - len(all_results_df)
+            if filtered_count > 0 and self.verbose:
+                if args.min_bp > 0:
+                    self.log(f"  Filtered {filtered_count} structures (< {args.min_bp} bp or < {args.paired_cutoff}% paired)")
+                else:
+                    self.log(f"  Filtered {filtered_count} structures (< {args.paired_cutoff}% paired)")
+                # Log filtering if logger is available
+                try:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Filtered {filtered_count} structures with < {args.min_bp} base pairs")
+                except:
+                    pass
+        else:
+            all_results_df = pd.DataFrame()
+        
+        elapsed = time.time() - start_time
+        final_memory = get_memory_usage()
+        
+        # Log comprehensive summary
+        self.log(f"\nCompleted in {elapsed:.2f}s")
+        self.log(f"Memory usage: Initial={initial_memory:.1f}MB, Final={final_memory:.1f}MB, Peak delta={final_memory - initial_memory:.1f}MB")
+        self.log(f"Found {len(all_results_df)} dsRNA structures")
+        
+        # Add summary statistics
+        if not all_results_df.empty:
+            self.log("=" * 60)
+            self.log("Summary Statistics:")
+            self.log(f"  Total dsRNAs found: {len(all_results_df)}")
+            self.log(f"  Average base pairs: {all_results_df['base_pairs'].mean():.1f}")
+            self.log(f"  Average percent paired: {all_results_df['percent_paired'].mean():.1f}%")
+            # Check if energy column exists (might be 'energy' or 'dG(kcal/mol)')
+            if 'energy' in all_results_df.columns:
+                self.log(f"  Average energy: {all_results_df['energy'].mean():.2f} kcal/mol")
+            elif 'dG(kcal/mol)' in all_results_df.columns:
+                self.log(f"  Average energy: {all_results_df['dG(kcal/mol)'].mean():.2f} kcal/mol")
+            self.log(f"  Chromosomes processed: {all_results_df['chromosome'].nunique()}")
+            self.log(f"  Processing rate: {len(all_results_df) / elapsed:.1f} dsRNAs/second")
+            self.log("=" * 60)
+        
+        return all_results_df
             
 # Define the process_frame function
 def process_frame(frame_start, frame_step_size, end_coordinate, window_size, basename, algorithm, args, full_sequence, chromosome, strand, result_queue, pool):
@@ -772,6 +1836,182 @@ def process_frame(frame_start, frame_step_size, end_coordinate, window_size, bas
         pool.apply_async(process_window, (start, window_start, window_size, basename, algorithm, args, full_sequence, chromosome, strand, result_queue))
         # For debugging, run the process_window function directly
         # process_window(start, start, args.w, basename, args.algorithm, args, full_sequence, chromosome, strand, result_queue)
+
+# ProcessorArgs class at module level for pickling
+class ProcessorArgs:
+    """Map main script argument names to what the DataFrame processor expects"""
+    def __init__(self, original_args):
+        self.filename = original_args.filename
+        self.w = original_args.w
+        self.s = original_args.step
+        self.step = original_args.step
+        self.c = original_args.cpus
+        self.cpus = original_args.cpus
+        self.score = original_args.score
+        self.min_bp = original_args.min_bp  # Add min_bp parameter
+        self.min = original_args.min  # Add min parameter
+        self.max = original_args.max  # Add max parameter
+        self.paired_cutoff = original_args.paired_cutoff
+        self.gap = original_args.gaps  # Note: gaps -> gap
+        self.gaps = original_args.gaps
+        self.match = original_args.match
+        self.mismatch = original_args.mismatch
+        self.t = original_args.t
+        self.chromosome = original_args.only_seq  # Use only_seq for chromosome selection
+        self.only_seq = original_args.only_seq
+        self.start = original_args.start
+        self.end = original_args.end
+        self.chunk_size = original_args.chunk_size
+        self.forward_only = original_args.forward_only
+        self.reverse_only = original_args.reverse_only
+        self.output_dir = original_args.output_dir
+        self.output_label = original_args.output_label
+
+def run_dataframe_approach(args):
+    """Run the optimized DataFrame approach"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Create output directory first to set up logging
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = f"dsrnascan_{timestamp}"
+    
+    os.makedirs(output_dir, exist_ok=True)
+    # logger.info(f"Output directory: {output_dir}")  # Will be shown after logging setup
+    
+    # Setup logging to capture all output
+    log_file = os.path.join(output_dir, 'dsrnascan.log')
+    
+    # Clear any existing handlers
+    root_logger = logging.getLogger()
+    root_logger.handlers = []
+    root_logger.setLevel(logging.INFO)
+    
+    # File handler with timestamps
+    file_handler = logging.FileHandler(log_file, mode='w')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+    root_logger.addHandler(file_handler)
+    
+    # Console handler without timestamps (only message)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    root_logger.addHandler(console_handler)
+    
+    logger = logging.getLogger(__name__)
+    
+    # Log initial parameters
+    logger.info(f"Output directory: {output_dir}")
+    logger.info(f"dsRNAscan version {__version__}")
+    logger.info(f"Command: {' '.join(sys.argv)}")
+    
+    # Dump all arguments to log for complete record
+    logger.info("=" * 60)
+    logger.info("Complete argument list:")
+    for arg, value in sorted(vars(args).items()):
+        logger.info(f"  {arg}: {value}")
+    logger.info("=" * 60)
+    
+    # Log key parameters for quick reference
+    logger.info(f"Key parameters: min_bp={args.min_bp}, score={args.score}, paired_cutoff={args.paired_cutoff}")
+    logger.info(f"Window size: {args.w}, Step size: {args.step}, CPUs: {args.cpus}")
+    
+    processor_args = ProcessorArgs(args)
+    
+    # ChunkedDsRNAProcessor is now defined in this file above
+    
+    # Determine which strands to process
+    if args.forward_only:
+        both_strands = False
+        reverse_only = False
+    elif args.reverse_only:
+        both_strands = False
+        reverse_only = True
+    else:
+        both_strands = True
+        reverse_only = False
+    
+    # Create processor
+    processor = ChunkedDsRNAProcessor(
+        chunk_size=args.chunk_size,
+        both_strands=both_strands,
+        reverse_only=reverse_only,
+        verbose=True
+    )
+    
+    # Process the file
+    results = processor.process_fasta(processor_args.filename, einverted_bin, processor_args)
+    
+    # Output directory already created above for logging
+    
+    # Save results in the same format as regular approach
+    base_filename = os.path.basename(args.filename)
+    if base_filename.endswith('.gz'):
+        base_filename = base_filename[:-3]
+    if base_filename.endswith('.fa') or base_filename.endswith('.fasta'):
+        base_filename = os.path.splitext(base_filename)[0]
+    
+    # Determine the output label (chromosome name)
+    if args.output_label == 'header':
+        # Use the actual chromosome name from the data
+        if not results.empty and 'chromosome' in results.columns:
+            # Get the actual chromosome name (without region info)
+            chrom_name = results.iloc[0]['chromosome']
+            if ':' in chrom_name:
+                chrom_name = chrom_name.split(':')[0]
+        else:
+            chrom_name = base_filename
+    else:
+        chrom_name = args.output_label
+    
+    # Create output filename matching regular format
+    if args.forward_only:
+        strand_label = 'forward'
+    elif args.reverse_only:
+        strand_label = 'reverse'
+    else:
+        strand_label = 'both'
+    output_file = os.path.join(output_dir, 
+        f"{base_filename}.{chrom_name}.{strand_label}_win{args.w}_step{args.step}_start{args.start}_score{args.score}_merged_results.txt")
+    
+    # Write in the same format as regular approach
+    with open(output_file, 'w') as f:
+        # Write header matching regular format
+        f.write("Chromosome\tStrand\ti_start\ti_end\tj_start\tj_end\t"
+               "Score\tRawMatch\tPercMatch\tGaps\t"
+               "dG(kcal/mol)\tbase_pairs\tpercent_paired\tlongest_helix\t"
+               "eff_i_start\teff_i_end\teff_j_start\teff_j_end\t"
+               "i_seq\tj_seq\tstructure\n")
+        
+        # Write results
+        for _, row in results.iterrows():
+            
+            # Ensure we have all required fields with defaults
+            # Calculate base_pairs if not present
+            base_pairs = row.get('base_pairs', count_base_pairs(row.get('structure', '')))
+            
+            f.write(f"{row.get('chromosome', chrom_name)}\t{row.get('strand', '+')}\t"
+                   f"{row.get('i_start', 0)}\t{row.get('i_end', 0)}\t"
+                   f"{row.get('j_start', 0)}\t{row.get('j_end', 0)}\t"
+                   f"{row.get('score', 0)}\t{row.get('raw_match', '0/0')}\t"
+                   f"{row.get('match_perc', 0)}\t{row.get('gap_numb', 0)}\t"
+                   f"{row.get('energy', 0.0)}\t{base_pairs}\t{row.get('percent_paired', 0)}\t{row.get('longest_helix', 0)}\t"
+                   f"{row.get('eff_i_start', 0)}\t{row.get('eff_i_end', 0)}\t"
+                   f"{row.get('eff_j_start', 0)}\t{row.get('eff_j_end', 0)}\t"
+                   f"{row.get('i_seq', '')}\t{row.get('j_seq', '')}\t"
+                   f"{row.get('structure', '')}\n")
+    
+    print(f"\nResults saved to: {output_file}")
+    print(f"Total dsRNA structures found: {len(results)}")
+    
+    # Generate BP file if needed
+    if not results.empty:
+        bp_file = output_file.replace('.txt', '.bp')
+        generate_bp_file(output_file, bp_file)
+    
+    return len(results)
 
 def main():
     ### Arguments
@@ -788,10 +2028,12 @@ def main():
                         help='Step size; default = 150')
     parser.add_argument('-w', type=int, default=10000,
                         help='Window size; default = 10000')
-    parser.add_argument('--max_span', type=int, default=10000,
-                        help='Max span of inverted repeat; default = 10000')
-    parser.add_argument('--score', type=int, default=50,
-                        help='Minimum score threshold for inverted repeat; Default = 50')
+    parser.add_argument('--max_span', type=int, default=None,
+                        help='Max span of inverted repeat; default = window size')
+    parser.add_argument('--min_bp', type=int, default=25,
+                        help='Minimum number of base pairs required (overrides --score if set); Default = 25')
+    parser.add_argument('--score', type=int, default=None,
+                        help='Minimum score threshold for inverted repeat (deprecated, use --min_bp); Default = 75')
     parser.add_argument('--min', type=int, default=30,
                         help='Minimum length of inverted repeat; Default = 30')
     parser.add_argument('--max', type=int, default=10000,
@@ -810,10 +2052,10 @@ def main():
                         help='Cutoff to ignore sturctures with low percentage of pairs; Default <70')
     parser.add_argument('--algorithm', type=str, default="einverted",
             help='Inverted repeat finding algorithm (einverted or iupacpal)')
-    parser.add_argument('--reverse', action='store_true', default=False,
-                        help='Use this option if running on reverse strand')
-    parser.add_argument('--chr', type=str, default='header',
-                        help='Chromosome name, if chromosome name in header type "header" (default: header)')
+    parser.add_argument('--forward-only', action='store_true', default=False,
+                        help='Process forward strand only (default: both strands)')
+    parser.add_argument('--reverse-only', action='store_true', default=False,
+                        help='Process reverse strand only (default: both strands)')
     parser.add_argument('--output_label', type=str, default='header',
                         help='Label for output files and results (default: use sequence header)')
     parser.add_argument('--only_seq', type=str, default=None,
@@ -824,8 +2066,68 @@ def main():
                     help='Clean up temporary files after processing')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Output directory (default: dsrnascan_YYYYMMDD_HHMMSS)')
+    parser.add_argument('--batch', action='store_true', default=False,
+                        help='DEPRECATED: Only used with --legacy flag. Has no effect in default DataFrame mode')
+    parser.add_argument('--legacy', action='store_true', default=False,
+                        help='DEPRECATED: Use legacy non-DataFrame approach (much slower, will be removed in future versions)')
+    parser.add_argument('--chunk-size', type=int, default=10000,
+                        help='Windows per chunk for DataFrame approach (default: 10000)')
+    parser.add_argument('--eliminate-nested', action='store_true', default=True,
+                        help='Remove nested dsRNAs (default: True)')
     
     args = parser.parse_args()
+    
+    # Get logger for main function
+    logger = logging.getLogger(__name__)
+    
+    # Set max_span to window size if not specified
+    if args.max_span is None:
+        args.max_span = args.w
+        logger.info(f"Setting max_span to window size: {args.max_span}")
+    
+    # Check for deprecated flags
+    if args.batch and not args.legacy:
+        logger.warning("WARNING: --batch flag has no effect without --legacy. The default DataFrame mode handles batching automatically.")
+        print("WARNING: --batch flag has no effect without --legacy. The default DataFrame mode handles batching automatically.")
+    
+    if args.legacy:
+        logger.warning("WARNING: --legacy flag is DEPRECATED and will be removed in a future version.")
+        logger.warning("The legacy mode is significantly slower than the default DataFrame approach.")
+        print("\n" + "="*80)
+        print("WARNING: You are using DEPRECATED --legacy mode!")
+        print("This mode is significantly slower and will be removed in future versions.")
+        print("Please use the default DataFrame mode (remove --legacy flag) for better performance.")
+        print("="*80 + "\n")
+    
+    # Handle min_bp vs score parameter
+    if args.min_bp is not None and args.score is not None:
+        # Both specified - use the provided values
+        msg1 = f"Using minimum {args.min_bp} base pairs with custom einverted score: {args.score}"
+        msg2 = f"Note: score {args.score} would normally correspond to ~{args.score // 3} bp with default match scoring"
+        print(msg1)
+        print(msg2)
+    elif args.min_bp is not None:
+        # User specified min_bp, calculate score from it (assuming default match=3)
+        if not args.score:
+            args.score = args.min_bp * args.match  # Use actual match score
+        msg = f"Using minimum {args.min_bp} base pairs (einverted score: {args.score}, match={args.match})"
+        print(msg)
+    elif args.score is not None:
+        # Only score specified (backward compatibility)
+        # Don't enforce min_bp filtering when custom score is used
+        args.min_bp = 0  # No minimum filtering
+        msg = f"Using einverted score {args.score} (no minimum base pair filtering)"
+        print(msg)
+    else:
+        # Neither specified, use default
+        args.min_bp = 25
+        args.score = 75
+        msg = f"Using default minimum {args.min_bp} base pairs (einverted score: {args.score})"
+        print(msg)
+    
+    # Validate strand options
+    if args.forward_only and args.reverse_only:
+        parser.error("Cannot use both --forward-only and --reverse-only at the same time")
     
     # Validate command line arguments
     if args.w <= 0:
@@ -833,7 +2135,8 @@ def main():
     if args.step <= 0:
         parser.error("Step size must be greater than 0")
     if args.step > args.w:
-        print("Warning: Step size is larger than window size. This may cause gaps in coverage.")
+        msg = "Warning: Step size is larger than window size. This may cause gaps in coverage."
+        print(msg)
     if args.min <= 0:
         parser.error("Minimum inverted repeat length must be greater than 0")
     if args.max < args.min:
@@ -866,6 +2169,18 @@ def main():
     except Exception as e:
         parser.error(f"Error reading input file '{args.filename}': {str(e)}")
     
+    # Use DataFrame approach by default (unless legacy flag is set)
+    if not args.legacy:
+        msg = "Using optimized DataFrame approach..."
+        print(msg)
+        return run_dataframe_approach(args)
+    
+    # Legacy approach (deprecated)
+    msg1 = "Proceeding with legacy non-DataFrame approach..."
+    msg2 = "Note: This approach is much slower than the default DataFrame mode."
+    print(msg1)
+    print(msg2)
+    
     # Create output directory
     if args.output_dir:
         output_dir = args.output_dir
@@ -876,13 +2191,13 @@ def main():
     
     # Create the directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
-    print(f"Output directory: {output_dir}")
+    # logger.info(f"Output directory: {output_dir}")  # Will be shown after logging setup
     
     # Create a multiprocessing Manager for the result queue
     manager = multiprocessing.Manager()
     result_queue = manager.Queue(maxsize=10000)  # Buffer up to 10k results
     
-    chromosome = args.chr
+    # chromosome will be set from the sequence header or output_label
     end_coordinate = int(args.end)
     fasta_file = args.filename
     cpu_count = args.cpus
@@ -920,19 +2235,12 @@ def main():
                 # Convert to RNA uppercase
                 #cur_record.seq = cur_record.seq.transcribe().upper()
                 
-                # Check if chromosome is 'header' - use new parameter names with fallback
-                if hasattr(args, 'output_label'):
-                    if args.output_label == "header":
-                        chromosome = cur_record.name
-                    else:
-                        chromosome = args.output_label
-                elif args.chr == "header":
+                # Determine chromosome name from output_label or header
+                if args.output_label == "header":
                     chromosome = cur_record.name
                 else:
-                    chromosome = args.chr
+                    chromosome = args.output_label
 
-                # Determine strand and set up basename
-                strand = "-" if args.reverse else "+"
                 # Get base filename without extension(s)
                 base_filename = args.filename
                 if base_filename.endswith('.gz'):
@@ -940,16 +2248,28 @@ def main():
                 if base_filename.endswith('.fa') or base_filename.endswith('.fasta'):
                     base_filename = os.path.splitext(base_filename)[0]
                 
-                # Prepare the sequence in memory (reverse complement if needed)
-                if args.reverse:
-                    # For reverse strand, reverse complement the entire sequence once
-                    full_sequence = str(cur_record.seq.reverse_complement().upper())
+                # Determine which strands to process
+                if args.forward_only:
+                    strands_to_process = ["+"]
+                elif args.reverse_only:
+                    strands_to_process = ["-"]
                 else:
-                    # For forward strand, just use the sequence as-is
-                    full_sequence = str(cur_record.seq.upper())
+                    strands_to_process = ["+", "-"]
                 
-                # Set up basename for output files
-                basename = f"{base_filename}.{chromosome}.{'reverse' if args.reverse else 'forward'}_win{args.w}_step{args.step}_start{args.start}_score{args.score}"
+                for strand in strands_to_process:
+                    # Prepare the sequence in memory (complement if needed)
+                    if strand == "-":
+                        # For reverse strand, just complement (not reverse complement)
+                        # This keeps coordinates in the same orientation
+                        complement = str.maketrans('ATGC', 'TACG')
+                        full_sequence = str(cur_record.seq.upper()).translate(complement)
+                    else:
+                        # For forward strand, just use the sequence as-is
+                        full_sequence = str(cur_record.seq.upper())
+                    
+                    # Set up basename for output files
+                    strand_label = 'reverse' if strand == '-' else 'forward'
+                    basename = f"{base_filename}.{chromosome}.{strand_label}_win{args.w}_step{args.step}_start{args.start}_score{args.score}"
 
                 # Result files are now written directly via streaming (merged_results.txt)
                 
@@ -958,17 +2278,19 @@ def main():
                 #     bp_file.write("# Base Pair Predictions\n")
                 #     bp_file.write("# Format: sequence_id\tstart\tend\n")
 
-                # Process each sequence
-                end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
-                seq_length = end_coordinate - args.start
+                    # Process each sequence
+                    end_coordinate = args.end if args.end != 0 else len(cur_record.seq)
+                    seq_length = end_coordinate - args.start
 
-                # Determine if the sequence is short (less than window size)
-                is_short_sequence = seq_length < args.w
+                    # Determine if the sequence is short (less than window size)
+                    is_short_sequence = seq_length < args.w
 
-                # Print what we're scanning now
-                if is_short_sequence:
-                    print(f"Short sequence detected: {cur_record.name} length {seq_length} bp")
-                    print(f"Using single window approach for the entire sequence")
+                    # Print what we're scanning now
+                    print(f"Processing {chromosome} ({strand} strand)")
+                    
+                    if is_short_sequence:
+                        print(f"Short sequence detected: {cur_record.name} length {seq_length} bp")
+                        print(f"Using single window approach for the entire sequence")
                     
                     # Just process the entire sequence as one window
                     # For single window, process directly and write results
@@ -982,7 +2304,6 @@ def main():
                         f.write("Chromosome\tStrand\ti_start\ti_end\tj_start\tj_end\t"
                                "Score\tRawMatch\tPercMatch\tGaps\t"
                                "dG(kcal/mol)\tpercent_paired\tlongest_helix\t"
-                               "orig_arm_length\teff_arm_length\t"
                                "eff_i_start\teff_i_end\teff_j_start\teff_j_end\t"
                                "i_seq\tj_seq\tstructure\n")
                         
@@ -995,7 +2316,6 @@ def main():
                                    f"{result['score']}\t{result['raw_match']}\t"
                                    f"{result['match_perc']}\t{result['gap_numb']}\t"
                                    f"{result['energy']}\t{result['percent_paired']}\t{result['longest_helix']}\t"
-                                   f"{result['orig_arm_length']}\t{result['eff_arm_length']}\t"
                                    f"{result['eff_i_start']}\t{result['eff_i_end']}\t"
                                    f"{result['eff_j_start']}\t{result['eff_j_end']}\t"
                                    f"{result['i_seq']}\t{result['j_seq']}\t"

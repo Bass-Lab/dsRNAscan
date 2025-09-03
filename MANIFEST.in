@@ -8,6 +8,8 @@ include requirements.txt
 recursive-include dsrnascan/tools *
 recursive-include tools *
 recursive-include conda-recipe *
+# Exclude overlap_analyzer to reduce package size
+prune overlap_analyzer
 exclude test_sequence.fa
 exclude *.dsRNApredictions.bp
 exclude *_merged_results.txt
@@ -15,3 +17,4 @@ exclude *_ein_results.txt
 global-exclude *.pyc
 global-exclude __pycache__
 global-exclude .DS_Store
+global-exclude *.parquet
