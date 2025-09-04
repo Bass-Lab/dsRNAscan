@@ -57,24 +57,24 @@ else:  # Linux
         platform_binary = "einverted_linux_x86_64"
     generic_binary = "einverted"
 
-# Try multiple locations - PREFER platform-specific binaries
+# Try multiple locations - PREFER generic einverted (what CI builds)
 possible_paths = []
 
-# First try platform-specific binaries
-for base_dir in [
-    os.path.join(script_dir, "tools"),
-    os.path.join(script_dir, "..", "tools"),
-    os.path.join(os.path.dirname(script_dir), "tools"),
-]:
-    possible_paths.append(os.path.join(base_dir, platform_binary))
-
-# Then try generic binaries
+# First try generic binaries (what compile script creates)
 for base_dir in [
     os.path.join(script_dir, "tools"),
     os.path.join(script_dir, "..", "tools"),
     os.path.join(os.path.dirname(script_dir), "tools"),
 ]:
     possible_paths.append(os.path.join(base_dir, generic_binary))
+
+# Then try platform-specific binaries (for pre-built distribution)
+for base_dir in [
+    os.path.join(script_dir, "tools"),
+    os.path.join(script_dir, "..", "tools"),
+    os.path.join(os.path.dirname(script_dir), "tools"),
+]:
+    possible_paths.append(os.path.join(base_dir, platform_binary))
 
 # Finally try system installations
 possible_paths.extend([

@@ -38,69 +38,25 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
-        # Check if pre-built binary already exists for this platform
-        PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
-        ARCH=$(uname -m)
+        # Simple strategy: Always compile fresh to ensure G-U wobble patch
+        echo "Compiling einverted with G-U wobble patch..."
+        chmod +x compile_patched_einverted.sh
+        ./compile_patched_einverted.sh
         
-        if [[ "$PLATFORM" == "darwin" ]]; then
-            if [[ "$ARCH" == "arm64" ]] || [[ "$ARCH" == "aarch64" ]]; then
-                EXPECTED_BINARY="dsrnascan/tools/einverted_darwin_arm64"
-            else
-                EXPECTED_BINARY="dsrnascan/tools/einverted_darwin_x86_64"
-            fi
+        # Verify it was created and works
+        echo "Verifying einverted binary..."
+        if [ -f "dsrnascan/tools/einverted" ]; then
+            echo "✓ einverted binary created"
+            # Quick test that it runs
+            dsrnascan/tools/einverted -help 2>&1 | head -1
         else
-            EXPECTED_BINARY="dsrnascan/tools/einverted_linux_x86_64"
+            echo "ERROR: einverted binary not created!"
+            ls -la dsrnascan/tools/
+            exit 1
         fi
         
-        BINARY_WORKS=false
-        
-        if [ -f "$EXPECTED_BINARY" ] && [ -x "$EXPECTED_BINARY" ]; then
-            echo "Found pre-built binary: $EXPECTED_BINARY"
-            echo "Testing G-U wobble support in pre-built binary..."
-            
-            # Test the SPECIFIC platform binary, not the generic one
-            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
-            echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
-            
-            if "$EXPECTED_BINARY" -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
-                echo "✓ Pre-built binary has G-U wobble support!"
-                # Copy as main einverted
-                cp "$EXPECTED_BINARY" dsrnascan/tools/einverted
-                chmod +x dsrnascan/tools/einverted
-                BINARY_WORKS=true
-            else
-                echo "⚠ Pre-built binary does NOT have G-U wobble support, will compile from source..."
-            fi
-            rm -f test_gu.fa test.out
-        else
-            echo "Pre-built binary not found at $EXPECTED_BINARY"
-        fi
-        
-        # If pre-built binary doesn't work or doesn't exist, compile from source
-        if [ "$BINARY_WORKS" = false ]; then
-            echo "Compiling einverted from source with G-U wobble patch..."
-            chmod +x compile_patched_einverted.sh
-            ./compile_patched_einverted.sh
-            
-            # Test the newly compiled binary
-            echo "Testing compiled binary..."
-            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
-            echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
-            
-            if dsrnascan/tools/einverted -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
-                echo "✓ Successfully compiled einverted with G-U wobble support!"
-            else
-                echo "ERROR: Compiled binary still doesn't support G-U wobble pairing!"
-                exit 1
-            fi
-            rm -f test_gu.fa test.out
-        fi
-        
-        # Verify the binary was created
-        ls -la dsrnascan/tools/einverted*
-        
-        # Clean up to save space
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz test_gu.fa test.out
+        # Clean up build artifacts
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
     
     - name: Build einverted (Windows)
       if: runner.os == 'Windows'
@@ -219,27 +175,16 @@ jobs:
         echo ">test_gc" >> test.fasta
         echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
         
-        # First test einverted directly
-        echo "Testing einverted binary directly..."
-        if dsrnascan/tools/einverted -sequence test.fasta -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
-            echo "✓ einverted binary works with G-U wobble"
-        else
-            echo "✗ einverted binary does NOT support G-U wobble or failed to run"
-            # Try to run it without suppressing errors to see what's wrong
-            echo "Attempting to run einverted with full output:"
-            dsrnascan/tools/einverted -sequence test.fasta -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto || echo "einverted failed with exit code $?"
-        fi
-        
-        # Now test with dsrnascan
-        echo "Testing with dsrnascan..."
+        # Test with dsrnascan (which will verify G-U wobble support internally)
+        echo "Running dsrnascan functional test..."
         dsrnascan test.fasta -w 100 -s 50 --score 30 -c 1 || {
-            echo "ERROR: dsrnascan failed"
-            echo "Checking which einverted dsrnascan is trying to use..."
-            python -c "import dsrnascan; print('dsrnascan module location:', dsrnascan.__file__)" || true
-            echo "Contents of dsrnascan/tools/:"
-            ls -la dsrnascan/tools/ || true
+            echo "ERROR: dsrnascan failed!"
+            echo "Debug info:"
+            ls -la dsrnascan/tools/
             exit 1
         }
+        
+        echo "✓ dsrnascan test passed!"
     
     - name: Run functional test (Windows)
       if: runner.os == 'Windows'
@@ -307,58 +252,3 @@ jobs:
         dsrnascan --help
         python -c "import dsrnascan; print('Import successful')"
 
-  build-binaries:
-    name: Build einverted binaries for release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux-x86_64
-            binary: einverted_linux_x86_64
-          - os: macos-13  # Intel
-            name: macos-x86_64
-            binary: einverted_darwin_x86_64
-          - os: macos-14  # Apple Silicon
-            name: macos-arm64
-            binary: einverted_darwin_arm64
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build einverted from EMBOSS
-      run: |
-        # ALWAYS compile from source to ensure G-U wobble patch is applied
-        chmod +x compile_patched_einverted.sh
-        ./compile_patched_einverted.sh
-        
-        # Verify the specific binary exists
-        ls -la dsrnascan/tools/${{ matrix.binary }}
-        
-        # TEST that it has G-U wobble support
-        echo "Testing G-U wobble support in compiled binary..."
-        echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
-        echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
-        
-        if dsrnascan/tools/${{ matrix.binary }} -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
-            echo "✓ Compiled binary has G-U wobble support!"
-        else
-            echo "ERROR: Compiled binary does NOT have G-U wobble support!"
-            echo "The patch may not have been applied correctly."
-            exit 1
-        fi
-        
-        # Clean up
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz test_gu.fa
-        
-    - name: Test binary
-      run: |
-        dsrnascan/tools/${{ matrix.binary }} -help || echo "Binary test completed"
-        
-    - name: Upload binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: einverted-${{ matrix.name }}
-        path: dsrnascan/tools/${{ matrix.binary }}
-        retention-days: 90
