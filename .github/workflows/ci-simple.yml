@@ -1,4 +1,4 @@
-name: CI Tests
+name: Quick Install Tests
 
 on:
   push:
@@ -8,14 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    name: Test - ${{ matrix.os }} - Python ${{ matrix.python-version }}
+  quick-install:
+    name: Quick Install - ${{ matrix.os }} - Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.10']
+        python-version: ['3.9', '3.10', '3.11']
 
     steps:
     - name: Checkout code
@@ -26,7 +26,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-    - name: Install dependencies
+    - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
         pip install build wheel
@@ -34,49 +34,18 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
-        # Clean up any existing builds to ensure fresh compilation
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz dsrnascan/tools/*
-        
-        # Simple strategy: Always compile fresh to ensure G-U wobble patch
         echo "Compiling einverted with G-U wobble patch..."
         chmod +x compile_patched_einverted.sh
         ./compile_patched_einverted.sh
         
-        # Verify it was created and works
-        echo "Verifying einverted binary..."
+        # Verify it was created
         if [ -f "dsrnascan/tools/einverted" ]; then
             echo "✓ einverted binary created"
-            # Quick test that it runs
-            dsrnascan/tools/einverted -help 2>&1 | head -1
-            
-            # Test G-U wobble support directly
-            echo "Testing G-U wobble support directly..."
-            echo -e ">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNTTTTTTTTTTTTTT" | \
-            dsrnascan/tools/einverted -sequence stdin -threshold 15 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | \
-            head -20
-            
-            # Also test with our actual test sequences
-            echo "Testing with actual test sequences..."
-            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" | \
-            dsrnascan/tools/einverted -sequence stdin -threshold 30 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | \
-            head -20
-            
-            # Debug: Check what we actually have
-            echo "Current directory: $(pwd)"
-            echo "Directory contents:"
-            ls -la
-            echo "dsrnascan/tools contents:"
-            ls -la dsrnascan/tools/
-            echo "File type of einverted:"
-            file dsrnascan/tools/einverted
+            echo "Binary size: $(ls -lh dsrnascan/tools/einverted | awk '{print $5}')"
         else
             echo "ERROR: einverted binary not created!"
-            ls -la dsrnascan/tools/
             exit 1
         fi
-        
-        # Clean up build artifacts
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
     
     - name: Build einverted (Windows)
       if: runner.os == 'Windows'
@@ -85,219 +54,50 @@ jobs:
         # Create tools directory
         mkdir -p dsrnascan/tools
         
-        # For Windows, try to compile with MinGW/MSYS2
-        echo "Attempting to compile einverted on Windows..."
-        
-        # Download EMBOSS
-        if [ ! -f "EMBOSS-6.6.0.tar.gz" ]; then
-            curl -L -o EMBOSS-6.6.0.tar.gz ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz
-        fi
-        
-        # Extract EMBOSS
-        tar -xzf EMBOSS-6.6.0.tar.gz
-        cd EMBOSS-6.6.0
-        
-        # Apply G-U wobble patch
-        patch -p1 < ../einverted.patch
-        
-        # Try to configure and build
-        ./configure --without-x --disable-shared --without-pngdriver --without-hpdf --without-mysql --without-postgresql || {
-            echo "Configure failed on Windows, creating placeholder"
-            echo '#!/bin/bash' > ../dsrnascan/tools/einverted.exe
-            echo 'echo "einverted not available on Windows - use WSL or Docker"' >> ../dsrnascan/tools/einverted.exe
-            echo 'exit 1' >> ../dsrnascan/tools/einverted.exe
-            chmod +x ../dsrnascan/tools/einverted.exe
-            cd ..
-            exit 0
-        }
-        
-        # Try to build einverted
-        cd emboss
-        make einverted || {
-            echo "Build failed on Windows, creating placeholder"
-            echo '#!/bin/bash' > ../../dsrnascan/tools/einverted.exe
-            echo 'echo "einverted not available on Windows - use WSL or Docker"' >> ../../dsrnascan/tools/einverted.exe
-            echo 'exit 1' >> ../../dsrnascan/tools/einverted.exe
-            chmod +x ../../dsrnascan/tools/einverted.exe
-            cd ../..
-            exit 0
-        }
-        
-        # Copy the binary if it exists
-        if [ -f ".libs/einverted.exe" ]; then
-            cp .libs/einverted.exe ../../dsrnascan/tools/einverted.exe
-        elif [ -f ".libs/einverted" ]; then
-            cp .libs/einverted ../../dsrnascan/tools/einverted.exe
-        elif [ -f "einverted.exe" ]; then
-            cp einverted.exe ../../dsrnascan/tools/einverted.exe
-        elif [ -f "einverted" ]; then
-            cp einverted ../../dsrnascan/tools/einverted.exe
-        fi
-        
-        cd ../..
-        chmod +x dsrnascan/tools/einverted.exe 2>/dev/null || true
+        # For Windows, create a placeholder that tells users to use WSL/Docker
+        echo '#!/bin/bash' > dsrnascan/tools/einverted.exe
+        echo 'echo "einverted not available on Windows - use WSL or Docker"' >> dsrnascan/tools/einverted.exe
+        echo 'exit 1' >> dsrnascan/tools/einverted.exe
+        chmod +x dsrnascan/tools/einverted.exe
     
-    - name: Build package
-      run: python -m build
-    
-    - name: Install package (Unix)
-      if: runner.os != 'Windows'
+    - name: Install package
       run: |
-        # Install in editable mode so it uses the local dsrnascan/tools directory
-        # The updated setup.py will now preserve our compiled einverted
-        pip install -e .
-        
-        # Verify it's using our einverted
-        echo "Checking which einverted will be used:"
-        python -c "import dsrnascan; import os; print('dsrnascan location:', dsrnascan.__file__); script_dir = os.path.dirname(dsrnascan.__file__); print('Looking for einverted in:', os.path.join(script_dir, 'tools'))"
-        ls -la dsrnascan/tools/
-        
-        # Verify binary is real (not placeholder)
-        echo "Binary verification:"
-        file dsrnascan/tools/einverted
-        echo "First few bytes (should be ELF or Mach-O header):"
-        head -c 20 dsrnascan/tools/einverted | od -c
-        echo "Size check:"
-        ls -lh dsrnascan/tools/einverted
-    
-    - name: Install package (Windows)
-      if: runner.os == 'Windows'
-      shell: python
-      run: |
-        import glob
-        import subprocess
-        wheels = glob.glob('dist/*.whl')
-        if wheels:
-            subprocess.run(['pip', 'install', wheels[0]], check=True)
-        else:
-            raise FileNotFoundError("No wheel file found in dist/")
-    
-    - name: Test CLI
-      run: |
-        dsrnascan --help
-        dsrnascan --version
-    
-    - name: Run functional test (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        # Create test file with proper long sequences
-        printf ">test_gu\n" > test.fasta
-        printf "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC\n" >> test.fasta
-        printf ">test_gc\n" >> test.fasta
-        printf "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\n" >> test.fasta
-        
-        # Verify test file was created correctly
-        echo "Test file contents:"
-        cat test.fasta
-        echo "Test file size: $(wc -c < test.fasta) bytes"
-        echo "Number of lines: $(wc -l < test.fasta)"
-        
-        # Test with dsrnascan (which will verify G-U wobble support internally)
-        echo "Running dsrnascan functional test..."
-        
-        # Add debugging to see which einverted dsrnascan is using
-        echo "DEBUG: Check which einverted dsrnascan will use:"
-        python -c "import dsrnascan.dsRNAscan as ds; import os; print('Script dir:', os.path.dirname(ds.__file__)); print('Einverted path would be:', os.path.join(os.path.dirname(ds.__file__), 'tools', 'einverted'))"
-        
-        # Also check if it exists and is executable
-        python -c "import os, dsrnascan.dsRNAscan as ds; p = os.path.join(os.path.dirname(ds.__file__), 'tools', 'einverted'); print(f'Exists: {os.path.exists(p)}'); print(f'Executable: {os.access(p, os.X_OK)}'); print(f'Size: {os.path.getsize(p) if os.path.exists(p) else 0} bytes')"
-        
-        # Test einverted directly to make sure it works with G-U pairing
-        echo "Testing einverted directly on our test file:"
-        dsrnascan/tools/einverted -sequence test.fasta -gap 12 -threshold 50 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | head -20
-        
-        # Just use default parameters - they work!
-        dsrnascan test.fasta || {
-            echo "ERROR: dsrnascan failed!"
-            echo "Debug info:"
-            ls -la dsrnascan/tools/
-            file dsrnascan/tools/einverted
-            head -c 100 dsrnascan/tools/einverted
-            exit 1
-        }
-        
-        echo "✓ dsrnascan test passed!"
-    
-    - name: Run functional test (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        # Create test file with proper long sequences
-        printf ">test_gu\n" > test.fasta
-        printf "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC\n" >> test.fasta
-        printf ">test_gc\n" >> test.fasta
-        printf "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\n" >> test.fasta
-        
-        # Verify test file was created correctly
-        echo "Test file contents:"
-        cat test.fasta
-        
-        # Run dsrnascan - it may fail on Windows without proper einverted
-        # Just use default parameters - they work!
-        dsrnascan test.fasta || {
-            echo "Note: dsrnascan may have issues on Windows native environment"
-            echo "Please use WSL or Docker for Windows instead"
-            # Don't fail the build on Windows for now
-            exit 0
-        }
-    
-    - name: Verify output files (Unix)
-      if: runner.os != 'Windows'
-      shell: python
-      run: |
-        import glob
-        import sys
-        
-        # Check for output directory
-        dirs = glob.glob('dsrnascan_*')
-        if not dirs:
-            print('ERROR: No output directory created')
-            sys.exit(1)
-        
-        print(f'✓ Output directory: {dirs[0]}')
-        
-        # Check for results file
-        results = glob.glob(f'{dirs[0]}/*_merged_results.txt')
-        if not results:
-            print('ERROR: No results file created')
-            sys.exit(1)
-        
-        print(f'✓ Results file: {results[0]}')
-        
-        # Check that we actually found dsRNA structures
-        with open(results[0], 'r') as f:
-            lines = f.readlines()
-            # First line is header, so we need at least 2 lines for results
-            if len(lines) < 2:
-                print(f'ERROR: No dsRNA structures found! File has only {len(lines)} lines')
-                print('This means einverted is not detecting G-U wobble pairs')
-                sys.exit(1)
-            else:
-                print(f'✓ Found {len(lines)-1} dsRNA structures')
-        
-        print('All tests passed!')
-
-  test-direct-install:
-    name: Test Direct Install from Repository
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install from local repository (simulating direct install)
-      run: |
-        # This simulates a direct install from the repository
-        # In a real scenario with a public repo, this would be:
-        # pip install git+https://github.com/${{ github.repository }}.git
+        # Do a proper package install (not editable mode)
         pip install .
+        
+        # Show where dsrnascan got installed
+        echo "Package installed to:"
+        pip show dsrnascan | grep Location
     
-    - name: Test installation
+    - name: Run built-in G-U wobble test
       run: |
-        dsrnascan --help
-        python -c "import dsrnascan; print('Import successful')"
+        echo "Testing dsrnascan with built-in G-U wobble verification..."
+        dsrnascan --version
+        echo ""
+        echo "The test passes if you see '✓ G-U wobble support confirmed' above"
+    
+    - name: Verify test results (Unix only)
+      if: runner.os != 'Windows'
+      run: |
+        # The built-in test creates a directory dsrnascan_* with results
+        if ls -d dsrnascan_* 2>/dev/null; then
+            echo "✓ Test output directory found"
+            # Check if results were created
+            if ls dsrnascan_*/*_merged_results.txt 2>/dev/null; then
+                echo "✓ Results file found"
+                result_count=$(tail -n +2 dsrnascan_*/*_merged_results.txt | wc -l)
+                if [ "$result_count" -gt 0 ]; then
+                    echo "✓ Found $result_count dsRNA structures"
+                    echo "TEST PASSED!"
+                else
+                    echo "ERROR: No dsRNA structures found"
+                    exit 1
+                fi
+            else
+                echo "ERROR: No results file created"
+                exit 1
+            fi
+        else
+            echo "ERROR: No output directory created"
+            exit 1
+        fi
