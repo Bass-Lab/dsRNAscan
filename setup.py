@@ -160,12 +160,29 @@ class CustomBuildPy(build_py):
                 print("="*60 + "\n")
                 raise RuntimeError(f"Failed to compile einverted with G-U patch: {e}")
         else:
+            # Check if we already have a valid compiled binary before creating placeholder
+            if os.path.exists(target_binary):
+                # Check if it's a real binary (not a placeholder script)
+                with open(target_binary, 'rb') as f:
+                    header = f.read(4)
+                is_binary = header in [
+                    b'\x7fELF',  # Linux ELF
+                    b'\xcf\xfa\xed\xfe',  # macOS Mach-O 64-bit
+                    b'\xce\xfa\xed\xfe',  # macOS Mach-O 32-bit
+                    b'\xca\xfe\xba\xbe',  # macOS Universal binary
+                    b'MZ\x90\x00',  # Windows PE
+                ]
+                if is_binary:
+                    print(f"INFO: Found existing compiled einverted binary (size: {os.path.getsize(target_binary)} bytes)")
+                    print(f"  Keeping existing binary")
+                    return
+            
             # Don't fail the build, just warn
             print(f"INFO: einverted will need to be compiled after installation")
             print(f"  Run: python -m dsrnascan.compile_einverted")
             print(f"  Or set DSRNASCAN_COMPILE=true during installation to compile automatically")
             
-            # Create a placeholder script if no binary exists
+            # Only create a placeholder script if no binary exists
             if not os.path.exists(target_binary):
                 with open(target_binary, 'w') as f:
                     f.write('#!/bin/sh\n')
