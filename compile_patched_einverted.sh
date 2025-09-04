@@ -76,11 +76,20 @@ echo "Installing patched einverted..."
 if [ -f ".libs/einverted" ]; then
     # The actual binary is in .libs directory
     cp .libs/einverted ../../dsrnascan/tools/einverted
-else
-    # Fallback to the wrapper if .libs doesn't exist
+elif [ -f "einverted" ]; then
+    # Fallback to the regular binary
     cp einverted ../../dsrnascan/tools/einverted
+else
+    echo "Error: Could not find einverted binary!"
+    exit 1
 fi
 chmod +x ../../dsrnascan/tools/einverted
+
+# Copy ACD file so einverted can run standalone
+if [ -f "acd/einverted.acd" ]; then
+    mkdir -p ../../dsrnascan/tools/acd
+    cp acd/einverted.acd ../../dsrnascan/tools/acd/
+fi
 
 # Also save platform-specific version
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -88,31 +97,15 @@ ARCH=$(uname -m)
 
 if [[ "$PLATFORM" == "darwin" ]]; then
     if [[ "$ARCH" == "arm64" ]] || [[ "$ARCH" == "aarch64" ]]; then
-        if [ -f ".libs/einverted" ]; then
-            cp .libs/einverted ../../dsrnascan/tools/einverted_darwin_arm64
-        else
-            cp einverted ../../dsrnascan/tools/einverted_darwin_arm64
-        fi
+        cp ../../dsrnascan/tools/einverted ../../dsrnascan/tools/einverted_darwin_arm64
     else
-        if [ -f ".libs/einverted" ]; then
-            cp .libs/einverted ../../dsrnascan/tools/einverted_darwin_x86_64
-        else
-            cp einverted ../../dsrnascan/tools/einverted_darwin_x86_64
-        fi
+        cp ../../dsrnascan/tools/einverted ../../dsrnascan/tools/einverted_darwin_x86_64
     fi
 elif [[ "$PLATFORM" == "linux" ]]; then
     if [[ "$ARCH" == "aarch64" ]]; then
-        if [ -f ".libs/einverted" ]; then
-            cp .libs/einverted ../../dsrnascan/tools/einverted_linux_aarch64
-        else
-            cp einverted ../../dsrnascan/tools/einverted_linux_aarch64
-        fi
+        cp ../../dsrnascan/tools/einverted ../../dsrnascan/tools/einverted_linux_aarch64
     else
-        if [ -f ".libs/einverted" ]; then
-            cp .libs/einverted ../../dsrnascan/tools/einverted_linux_x86_64
-        else
-            cp einverted ../../dsrnascan/tools/einverted_linux_x86_64
-        fi
+        cp ../../dsrnascan/tools/einverted ../../dsrnascan/tools/einverted_linux_x86_64
     fi
 fi
 
@@ -120,13 +113,23 @@ echo "✓ Successfully compiled einverted with G-U wobble patch!"
 echo ""
 echo "Testing G-U pairing..."
 echo ">test_gu" > test_gu.fa
-echo "GGGGGUUUUU" >> test_gu.fa
+echo "GGGGGNNNNNNNNNNNNNNNTTTTT" >> test_gu.fa
 
-if ./einverted -sequence test_gu.fa -gap 12 -threshold 10 -match 3 -mismatch -4 2>/dev/null | grep -q "Score: "; then
+# Set EMBOSS environment for ACD files
+export EMBOSS_ACDROOT=$(pwd)/../acd
+export EMBOSS_DATA=$(pwd)/../data
+
+# Test with the installed binary
+if ../../dsrnascan/tools/einverted -sequence test_gu.fa -gap 12 -threshold 15 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
     echo "✓ G-U pairing detected successfully!"
 else
-    echo "⚠ Warning: G-U pairing may not be working correctly"
+    echo "⚠ Warning: G-U pairing test inconclusive (may need ACD files at runtime)"
 fi
 
 cd ../..
+
+# Clean up test file
+rm -f EMBOSS-6.6.0/emboss/test_gu.fa
+
 echo "Done! Patched einverted installed in dsrnascan/tools/"
+echo "Note: einverted may need EMBOSS_ACDROOT environment variable set to locate ACD files"

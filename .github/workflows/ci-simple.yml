@@ -38,7 +38,7 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
-        # Use the existing compile script which handles everything
+        # Use the compile script
         chmod +x compile_patched_einverted.sh
         ./compile_patched_einverted.sh
         
@@ -167,12 +167,11 @@ jobs:
     
     - name: Build einverted from EMBOSS
       run: |
-        # Use the compile script - it creates platform-specific binaries
+        # Use the compile script
         chmod +x compile_patched_einverted.sh
         ./compile_patched_einverted.sh
         
-        # The script creates the platform-specific binary already
-        # Just verify it exists
+        # Verify the specific binary exists
         ls -la dsrnascan/tools/${{ matrix.binary }}
         
         # Clean up

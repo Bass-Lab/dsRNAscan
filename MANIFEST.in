@@ -3,10 +3,8 @@ include LICENSE
 include einverted.patch
 include einverted.c
 include compile_patched_einverted.sh
-include compile_minimal_einverted.c
 include requirements.txt
 recursive-include dsrnascan/tools *
-recursive-include tools *
 recursive-include conda-recipe *
 # Exclude overlap_analyzer to reduce package size
 prune overlap_analyzer
