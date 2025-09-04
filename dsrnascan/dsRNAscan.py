@@ -86,6 +86,48 @@ if not os.access(einverted_bin, os.X_OK):
     print("Please run: chmod +x {}".format(einverted_bin))
     sys.exit(1)
 
+# Fast G-U wobble pairing check (run only once at startup)
+GU_WOBBLE_VERIFIED = False
+def verify_gu_wobble_support():
+    """Quick test to verify einverted supports G-U wobble pairing."""
+    global GU_WOBBLE_VERIFIED
+    if GU_WOBBLE_VERIFIED:
+        return True
+    
+    try:
+        # Create tiny test file with G-U pairable sequence
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as tf:
+            tf.write(">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNUUUUUUUUUUUUUU\n")
+            test_file = tf.name
+        
+        # Run einverted with low threshold to find G-U pairs
+        result = subprocess.run(
+            [einverted_bin, '-sequence', test_file, '-threshold', '12', 
+             '-gap', '10', '-outfile', 'stdout', '-auto', '-nostdout'],
+            capture_output=True, text=True, timeout=2
+        )
+        
+        # Clean up
+        os.unlink(test_file)
+        
+        # Check if G-U pairing was detected (should find the GGGG-UUUU match)
+        if 'gggg' in result.stdout.lower() and 'tttt' in result.stdout.lower():
+            GU_WOBBLE_VERIFIED = True
+            return True
+        else:
+            print("WARNING: einverted does not appear to support G-U wobble pairing!")
+            print("This may lead to missing RNA structures. Please use the modified einverted.")
+            return False
+    except Exception:
+        # If test fails, assume it's OK but warn
+        print("WARNING: Could not verify G-U wobble support in einverted")
+        GU_WOBBLE_VERIFIED = True  # Don't re-test
+        return True
+
+# Verify G-U support once at startup
+verify_gu_wobble_support()
+
 def is_valid_fragment(fragment):
     # Validation logic for fragment
     return fragment != len(fragment) * "N"

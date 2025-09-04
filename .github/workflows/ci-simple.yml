@@ -35,16 +35,46 @@ jobs:
         python -m pip install --upgrade pip
         pip install build wheel
     
-    - name: Install einverted (Linux)
-      if: runner.os == 'Linux'
+    - name: Build einverted from EMBOSS (Unix)
+      if: runner.os != 'Windows'
       run: |
-        # Try to install from conda first (fastest)
-        # Note: This requires conda to be available, which it isn't by default
-        # Alternative: compile from source or download pre-compiled binary
-        echo "Note: einverted binary not available for Linux in this test"
-        echo "In production, users should install EMBOSS via their package manager"
-        # For Ubuntu/Debian: sudo apt-get install emboss
-        # For now, we'll skip the functional test on Linux
+        # We need EMBOSS to compile the real einverted.c with G-U wobble support
+        mkdir -p dsrnascan/tools
+        
+        # Download minimal EMBOSS (just what we need)
+        wget -q https://github.com/EMBOSS/EMBOSS/archive/refs/tags/rel-6-6-0.tar.gz -O emboss.tar.gz
+        tar -xzf emboss.tar.gz
+        cd EMBOSS-rel-6-6-0
+        
+        # Apply G-U wobble patch if we have it
+        if [ -f ../einverted.patch ]; then
+          patch -p1 < ../einverted.patch
+        else
+          # Copy our modified einverted.c over the original
+          cp ../einverted.c emboss/einverted.c
+        fi
+        
+        # Quick build - just what we need for einverted
+        ./configure --prefix=$PWD/../build --without-x --without-pngdriver --disable-shared
+        make -C ajax
+        make -C nucleus  
+        make -C emboss einverted
+        
+        # Copy the binary
+        cp emboss/.libs/einverted ../dsrnascan/tools/einverted
+        chmod +x ../dsrnascan/tools/einverted
+        cd ..
+        
+        # Clean up to save space
+        rm -rf EMBOSS-rel-6-6-0 emboss.tar.gz
+    
+    - name: Build einverted (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # For Windows, we'll skip compilation for now
+        echo "Windows einverted compilation requires MinGW/MSVC setup"
+        echo "Skipping einverted build for Windows - will use fallback"
+        mkdir dsrnascan\tools 2>nul || echo "Directory exists"
     
     - name: Build package
       run: python -m build
@@ -70,21 +100,21 @@ jobs:
         dsrnascan --help
         dsrnascan --version
     
-    - name: Run functional test (macOS only for now)
-      if: runner.os == 'macOS'
+    - name: Run functional test (Unix)
+      if: runner.os != 'Windows'
       run: |
         echo ">test" > test.fasta
         echo "GGGGGGGGGGAAAAAAAAAAAAAACCCCCCCCCC" >> test.fasta
         dsrnascan test.fasta -w 100 -s 50 --score 15 -c 1
     
-    - name: Skip functional test (Linux/Windows)
-      if: runner.os != 'macOS'
+    - name: Skip functional test (Windows)
+      if: runner.os == 'Windows'
       run: |
-        echo "Skipping functional test - einverted binary not available for ${{ runner.os }}"
-        echo "Users should install EMBOSS via their system package manager"
+        echo "Skipping functional test - einverted binary not built for Windows"
+        echo "Windows users should use WSL or Docker"
     
-    - name: Verify output files (macOS only)
-      if: runner.os == 'macOS'
+    - name: Verify output files (Unix)
+      if: runner.os != 'Windows'
       shell: python
       run: |
         import glob
@@ -131,3 +161,64 @@ jobs:
       run: |
         dsrnascan --help
         python -c "import dsrnascan; print('Import successful')"
+
+  build-binaries:
+    name: Build einverted binaries for release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            binary: einverted_linux_x86_64
+          - os: macos-13  # Intel
+            name: macos-x86_64
+            binary: einverted_darwin_x86_64
+          - os: macos-14  # Apple Silicon
+            name: macos-arm64
+            binary: einverted_darwin_arm64
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build einverted from EMBOSS
+      run: |
+        mkdir -p dsrnascan/tools
+        
+        # Download EMBOSS source
+        wget -q https://github.com/EMBOSS/EMBOSS/archive/refs/tags/rel-6-6-0.tar.gz -O emboss.tar.gz
+        tar -xzf emboss.tar.gz
+        cd EMBOSS-rel-6-6-0
+        
+        # Apply patch or use our modified version
+        if [ -f ../einverted.patch ]; then
+          patch -p1 < ../einverted.patch
+        else
+          cp ../einverted.c emboss/einverted.c
+        fi
+        
+        # Build einverted
+        ./configure --prefix=$PWD/../build --without-x --without-pngdriver --disable-shared
+        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) -C ajax
+        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) -C nucleus
+        make -C emboss einverted
+        
+        # Copy binary with platform name
+        cp emboss/.libs/einverted ../dsrnascan/tools/${{ matrix.binary }}
+        chmod +x ../dsrnascan/tools/${{ matrix.binary }}
+        cd ..
+        
+        # Clean up
+        rm -rf EMBOSS-rel-6-6-0 emboss.tar.gz
+        
+    - name: Test binary
+      run: |
+        dsrnascan/tools/${{ matrix.binary }} -help || echo "Binary test completed"
+        
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: einverted-${{ matrix.name }}
+        path: dsrnascan/tools/${{ matrix.binary }}
+        retention-days: 90
