@@ -38,9 +38,31 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
-        # Use the compile script
-        chmod +x compile_patched_einverted.sh
-        ./compile_patched_einverted.sh
+        # Check if pre-built binary already exists for this platform
+        PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        
+        if [[ "$PLATFORM" == "darwin" ]]; then
+            if [[ "$ARCH" == "arm64" ]] || [[ "$ARCH" == "aarch64" ]]; then
+                EXPECTED_BINARY="dsrnascan/tools/einverted_darwin_arm64"
+            else
+                EXPECTED_BINARY="dsrnascan/tools/einverted_darwin_x86_64"
+            fi
+        else
+            EXPECTED_BINARY="dsrnascan/tools/einverted_linux_x86_64"
+        fi
+        
+        if [ -f "$EXPECTED_BINARY" ] && [ -x "$EXPECTED_BINARY" ]; then
+            echo "Using pre-built binary: $EXPECTED_BINARY"
+            # Copy as main einverted
+            cp "$EXPECTED_BINARY" dsrnascan/tools/einverted
+            chmod +x dsrnascan/tools/einverted
+        else
+            echo "Pre-built binary not found, compiling from source..."
+            # Use the compile script
+            chmod +x compile_patched_einverted.sh
+            ./compile_patched_einverted.sh
+        fi
         
         # Verify the binary was created
         ls -la dsrnascan/tools/einverted*
@@ -63,13 +85,19 @@ jobs:
       if: runner.os == 'Windows'
       shell: bash
       run: |
-        # Use MSYS2 bash to compile einverted on Windows
-        echo "Building einverted with MSYS2/MinGW..."
-        
         # Create tools directory
         mkdir -p dsrnascan/tools
         
-        # Download EMBOSS if not present
+        # Check if pre-built Windows binary exists (we don't have one yet, but check anyway)
+        if [ -f "dsrnascan/tools/einverted_windows_x86_64.exe" ] && [ -x "dsrnascan/tools/einverted_windows_x86_64.exe" ]; then
+            echo "Using pre-built Windows binary"
+            cp dsrnascan/tools/einverted_windows_x86_64.exe dsrnascan/tools/einverted.exe
+            chmod +x dsrnascan/tools/einverted.exe
+        else
+            # Use MSYS2 bash to compile einverted on Windows
+            echo "Pre-built Windows binary not found, attempting to compile with MSYS2/MinGW..."
+            
+            # Download EMBOSS if not present
         if [ ! -f "EMBOSS-6.6.0.tar.gz" ]; then
             curl -L -o EMBOSS-6.6.0.tar.gz ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz
         fi
@@ -122,12 +150,14 @@ jobs:
         
         # Test if it works
         echo "Testing einverted on Windows..."
-        echo -e ">test\nGGGGGNNNNNNNNNNNNNNTTTTT" > test_win.fa
-        if dsrnascan/tools/einverted.exe -sequence test_win.fa -threshold 15 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
+        echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_win.fa
+        echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_win.fa
+        if dsrnascan/tools/einverted.exe -sequence test_win.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
             echo "✓ einverted compiled and working on Windows!"
         else
             echo "⚠ einverted compilation completed but binary may not be functional"
         fi
+        fi  # Close the if statement for pre-built binary check
     
     - name: Build package
       run: python -m build
@@ -156,10 +186,12 @@ jobs:
     - name: Run functional test (Unix)
       if: runner.os != 'Windows'
       run: |
-        echo ">test" > test.fasta
-        echo "GGGGGGGGGGAAAAAAAAAAAAAACCCCCCCCCC" >> test.fasta
+        echo ">test_gu" > test.fasta
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
+        echo ">test_gc" >> test.fasta
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
         # This should run and pass the G-U wobble check
-        dsrnascan test.fasta -w 100 -s 50 --score 15 -c 1 || {
+        dsrnascan test.fasta -w 100 -s 50 --score 30 -c 1 || {
             echo "ERROR: dsrnascan failed - likely due to missing G-U wobble support"
             exit 1
         }
