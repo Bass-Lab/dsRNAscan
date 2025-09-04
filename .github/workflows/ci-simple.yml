@@ -52,9 +52,12 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         # For Windows, we'll skip compilation for now
-        echo "Windows einverted compilation requires MinGW/MSVC setup"
-        echo "Skipping einverted build for Windows - will use fallback"
-        mkdir dsrnascan\tools 2>nul || echo "Directory exists"
+        Write-Host "Windows einverted compilation requires MinGW/MSVC setup"
+        Write-Host "Skipping einverted build for Windows - will use fallback"
+        # Create directory if it doesn't exist
+        if (!(Test-Path "dsrnascan\tools")) {
+            New-Item -ItemType Directory -Path "dsrnascan\tools" -Force
+        }
     
     - name: Build package
       run: python -m build

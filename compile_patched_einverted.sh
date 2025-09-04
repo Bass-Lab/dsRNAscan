@@ -33,18 +33,42 @@ echo "Configuring EMBOSS..."
 
 # Compile necessary libraries first
 echo "Compiling necessary libraries..."
+echo "Building ajax libraries..."
 make -C ajax || echo "Some ajax components failed, continuing..."
+echo "Building nucleus library..."
 make -C nucleus || echo "Nucleus build failed, continuing..."
+echo "Building plplot library (required for einverted)..."
+make -C plplot || {
+    echo "Plplot build failed, trying to build it separately..."
+    cd plplot && make && cd ..
+}
 
 # Now compile einverted
 echo "Compiling einverted..."
 cd emboss
 make einverted || {
-    echo "Direct make failed, trying manual compilation..."
-    gcc -O3 -I../ajax/core -I../ajax/ajaxdb -I../ajax/acd -I../nucleus \
-        -o einverted einverted.c \
-        ../ajax/acd/*.o ../ajax/core/*.o ../nucleus/*.o \
-        -lm -lz 2>/dev/null || echo "Manual compilation also failed"
+    echo "Standard make failed, checking for missing dependencies..."
+    # Make sure plplot is built
+    if [ ! -f ../plplot/.libs/libeplplot.a ]; then
+        echo "Building plplot first..."
+        cd ../plplot && make && cd ../emboss
+    fi
+    # Try again
+    make einverted || {
+        echo "Still failing, trying to link manually..."
+        gcc -O3 -o einverted einverted.o \
+            ../nucleus/.libs/libnucleus.a \
+            ../ajax/acd/.libs/libacd.a \
+            ../ajax/ajaxdb/.libs/libajaxdb.a \
+            ../ajax/ensembl/.libs/libensembl.a \
+            ../ajax/graphics/.libs/libajaxg.a \
+            ../ajax/core/.libs/libajax.a \
+            ../ajax/zlib/.libs/libezlib.a \
+            ../ajax/expat/.libs/libeexpat.a \
+            ../ajax/pcre/.libs/libepcre.a \
+            ../plplot/.libs/libeplplot.a \
+            -lm -lz 2>&1 || echo "Manual linking also failed"
+    }
 }
 
 # Copy the ACTUAL BINARY (not the libtool wrapper) to tools directory
