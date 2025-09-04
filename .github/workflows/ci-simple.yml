@@ -38,6 +38,9 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
+        # Clean up any existing builds to ensure fresh compilation
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz dsrnascan/tools/*
+        
         # Simple strategy: Always compile fresh to ensure G-U wobble patch
         echo "Compiling einverted with G-U wobble patch..."
         chmod +x compile_patched_einverted.sh
@@ -49,6 +52,12 @@ jobs:
             echo "✓ einverted binary created"
             # Quick test that it runs
             dsrnascan/tools/einverted -help 2>&1 | head -1
+            
+            # Test G-U wobble support directly
+            echo "Testing G-U wobble support directly..."
+            echo -e ">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNTTTTTTTTTTTTTT" | \
+            dsrnascan/tools/einverted -sequence stdin -threshold 15 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | \
+            head -20
         else
             echo "ERROR: einverted binary not created!"
             ls -la dsrnascan/tools/

@@ -25,7 +25,17 @@ fi
 # Check if patch already applied
 if ! grep -q "Allowing for GU matches" emboss/einverted.c 2>/dev/null; then
     echo "Applying G-U wobble patch..."
-    patch -p1 < ../einverted.patch
+    patch -p1 < ../einverted.patch || {
+        echo "ERROR: Failed to apply patch!"
+        exit 1
+    }
+    # Verify patch was applied
+    if grep -q "Allowing for GU matches" emboss/einverted.c; then
+        echo "✓ Patch applied successfully"
+    else
+        echo "ERROR: Patch verification failed!"
+        exit 1
+    fi
 else
     echo "Patch already applied"
 fi
@@ -49,6 +59,10 @@ make -C plplot || {
 # Now compile einverted
 echo "Compiling einverted..."
 cd emboss
+
+# Clean any previous builds
+make clean 2>/dev/null || true
+
 make einverted || {
     echo "Standard make failed, checking for missing dependencies..."
     # Make sure plplot is built
