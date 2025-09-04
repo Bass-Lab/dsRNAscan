@@ -75,6 +75,10 @@ EMBOSS-6.6.0/
 EMBOSS-6.6.0.tar.gz
 emboss_install/
 
+# Einverted binaries (keep only generic one)
+dsrnascan/tools/einverted_*
+dsrnascan/tools/acd/
+
 # Temporary files
 *.tmp
 *.temp
