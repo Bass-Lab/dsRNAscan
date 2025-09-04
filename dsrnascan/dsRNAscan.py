@@ -34,14 +34,27 @@ locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 # Determine the directory of this script and set the local path for einverted
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
+# Check if we're on Windows
+import platform
+is_windows = platform.system().lower() == 'windows'
+einverted_name = "einverted.exe" if is_windows else "einverted"
+
 # Try multiple locations for einverted binary
 possible_paths = [
-    os.path.join(script_dir, "tools", "einverted"),  # Development location
-    os.path.join(script_dir, "..", "tools", "einverted"),  # Installed location
-    os.path.join(os.path.dirname(script_dir), "tools", "einverted"),  # Alternative installed
-    "/usr/local/bin/einverted",  # System installation
-    "/usr/bin/einverted",  # System installation
+    os.path.join(script_dir, "tools", einverted_name),  # Development location
+    os.path.join(script_dir, "..", "tools", einverted_name),  # Installed location
+    os.path.join(os.path.dirname(script_dir), "tools", einverted_name),  # Alternative installed
+    f"/usr/local/bin/{einverted_name}",  # System installation
+    f"/usr/bin/{einverted_name}",  # System installation
 ]
+
+# On Windows, also check without .exe extension (in case of Cygwin/MSYS2)
+if is_windows:
+    possible_paths.extend([
+        os.path.join(script_dir, "tools", "einverted"),
+        os.path.join(script_dir, "..", "tools", "einverted"),
+        os.path.join(os.path.dirname(script_dir), "tools", "einverted"),
+    ])
 
 einverted_bin = None
 for path in possible_paths:
@@ -52,10 +65,10 @@ for path in possible_paths:
 if not einverted_bin:
     # Last resort: check if einverted is in PATH
     from shutil import which
-    einverted_bin = which("einverted")
+    einverted_bin = which(einverted_name) or which("einverted")
     
 if not einverted_bin:
-    einverted_bin = os.path.join(script_dir, "tools", "einverted")  # Default for error message
+    einverted_bin = os.path.join(script_dir, "tools", einverted_name)  # Default for error message
 
 def smart_open(filename, mode='rt'):
     """

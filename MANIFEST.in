@@ -3,6 +3,8 @@ include LICENSE
 include einverted.patch
 include einverted.c
 include compile_patched_einverted.sh
+include compile_einverted_windows.bat
+include compile_einverted_windows.sh
 include requirements.txt
 recursive-include dsrnascan/tools *
 recursive-include conda-recipe *
