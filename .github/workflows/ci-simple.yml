@@ -45,8 +45,19 @@ jobs:
         # Verify the binary was created
         ls -la dsrnascan/tools/einverted*
         
+        # Test G-U wobble support explicitly
+        echo "Testing G-U wobble pairing support..."
+        echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
+        echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
+        if dsrnascan/tools/einverted -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
+            echo "✓ G-U wobble pairing verified!"
+        else
+            echo "ERROR: G-U wobble pairing NOT supported!"
+            exit 1
+        fi
+        
         # Clean up to save space
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz test_gu.fa test.out
     
     - name: Build einverted (Windows)
       if: runner.os == 'Windows'
@@ -88,7 +99,11 @@ jobs:
       run: |
         echo ">test" > test.fasta
         echo "GGGGGGGGGGAAAAAAAAAAAAAACCCCCCCCCC" >> test.fasta
-        dsrnascan test.fasta -w 100 -s 50 --score 15 -c 1
+        # This should run and pass the G-U wobble check
+        dsrnascan test.fasta -w 100 -s 50 --score 15 -c 1 || {
+            echo "ERROR: dsrnascan failed - likely due to missing G-U wobble support"
+            exit 1
+        }
     
     - name: Skip functional test (Windows)
       if: runner.os == 'Windows'

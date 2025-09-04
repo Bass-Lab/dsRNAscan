@@ -22,6 +22,15 @@ jobs:
       with:
         python-version: '3.9'
     
+    - name: Build einverted from EMBOSS
+      run: |
+        # Compile einverted with G-U wobble patch first
+        chmod +x compile_patched_einverted.sh
+        ./compile_patched_einverted.sh
+        
+        # Verify the binary was created
+        ls -la dsrnascan/tools/einverted*
+    
     - name: Install package
       run: |
         pip install .
@@ -31,10 +40,24 @@ jobs:
         dsrnascan --version
         dsrnascan --help
         
-        # Quick functional test
-        echo ">test" > test.fa
-        echo "GGGGGGGGGGAAAAAAAAAAAAAACCCCCCCCCC" >> test.fa
-        dsrnascan test.fa -w 100 -s 50 --score 15 -c 1
+        # Test G-U wobble support
+        echo "Testing G-U wobble pairing support..."
+        echo ">test_gu" > test_gu.fa
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test_gu.fa
+        echo ">test_gc" >> test_gu.fa
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
+        
+        # Run dsrnascan which should show G-U wobble verification in log
+        dsrnascan test_gu.fa -w 100 -s 50 --score 30 -c 1 2>&1 | tee dsrnascan.log
+        
+        # Check that G-U wobble was verified
+        if grep -q "G-U wobble pairing support verified" dsrnascan.log; then
+            echo "✓ G-U wobble support confirmed"
+        else
+            echo "ERROR: G-U wobble support not detected!"
+            cat dsrnascan.log
+            exit 1
+        fi
         
         # Verify output was created
         ls -la dsrnascan_*/

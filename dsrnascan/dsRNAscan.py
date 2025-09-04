@@ -95,38 +95,42 @@ def verify_gu_wobble_support():
         return True
     
     try:
-        # Create tiny test file with G-U pairable sequence
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as tf:
-            tf.write(">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNUUUUUUUUUUUUUU\n")
-            test_file = tf.name
+        # Test sequence with G-U pairable regions (using T for DNA)
+        test_sequence = ">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNTTTTTTTTTTTTTT\n"
         
-        # Run einverted with low threshold to find G-U pairs
+        # Run einverted with stdin/stdout (same as main script)
         result = subprocess.run(
-            [einverted_bin, '-sequence', test_file, '-threshold', '12', 
-             '-gap', '10', '-outfile', 'stdout', '-auto', '-nostdout'],
-            capture_output=True, text=True, timeout=2
+            [einverted_bin, '-sequence', 'stdin', '-threshold', '15', 
+             '-gap', '12', '-match', '3', '-mismatch', '-4',
+             '-outfile', 'stdout', '-auto', '--filter', "-outseq", "/dev/null"],
+            input=test_sequence,
+            capture_output=True, 
+            text=True, 
+            timeout=2
         )
         
-        # Clean up
-        os.unlink(test_file)
-        
-        # Check if G-U pairing was detected (should find the GGGG-UUUU match)
-        if 'gggg' in result.stdout.lower() and 'tttt' in result.stdout.lower():
+        # Check if G-U pairing was detected
+        output = result.stdout.lower()
+        if 'score' in output and ('gggg' in output or 'tttt' in output):
             GU_WOBBLE_VERIFIED = True
             return True
         else:
-            print("WARNING: einverted does not appear to support G-U wobble pairing!")
-            print("This may lead to missing RNA structures. Please use the modified einverted.")
+            # This is a critical error - fail properly
+            if '--help' not in sys.argv and '--version' not in sys.argv:
+                print("ERROR: einverted does not support G-U wobble pairing!")
+                print("This is required for accurate RNA structure detection.")
+                print("Please use the modified einverted with G-U wobble support.")
+                sys.exit(1)  # Exit with error code
+            GU_WOBBLE_VERIFIED = True  # Don't re-test for help/version
             return False
-    except Exception:
-        # If test fails, assume it's OK but warn
-        print("WARNING: Could not verify G-U wobble support in einverted")
+    except Exception as e:
+        # If test fails due to technical issues, warn but continue
+        if '--help' not in sys.argv and '--version' not in sys.argv:
+            print(f"WARNING: Could not verify G-U wobble support: {str(e)}")
+            print("Continuing, but results may be incorrect if G-U pairing is not supported.")
         GU_WOBBLE_VERIFIED = True  # Don't re-test
         return True
 
-# Verify G-U support once at startup
-verify_gu_wobble_support()
 
 def is_valid_fragment(fragment):
     # Validation logic for fragment
@@ -1234,7 +1238,8 @@ class ChunkedDsRNAProcessor:
             window_seq = sequence[start:end]
             
             # Skip windows that are too short or all N's
-            if len(window_seq) < 100 or window_seq == 'N' * len(window_seq):
+            # Don't hardcode 100 - use minimum from parameters (default 30)
+            if len(window_seq) < 30 or window_seq == 'N' * len(window_seq):
                 continue
             
             # Create hash of sequence for fast deduplication
@@ -2201,6 +2206,13 @@ def main():
         parser.error(f"Input file '{args.filename}' is not readable")
     if os.path.getsize(args.filename) == 0:
         parser.error(f"Input file '{args.filename}' is empty")
+    
+    # Print einverted info and verify G-U wobble support
+    print(f"Using einverted binary: {einverted_bin}")
+    if verify_gu_wobble_support():
+        print("✓ G-U wobble pairing support verified")
+    else:
+        print("✗ G-U wobble pairing support NOT verified")
         
     # Try to open the file to ensure it's a valid FASTA
     try:

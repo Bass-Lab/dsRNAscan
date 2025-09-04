@@ -113,14 +113,14 @@ echo "✓ Successfully compiled einverted with G-U wobble patch!"
 echo ""
 echo "Testing G-U pairing..."
 echo ">test_gu" > test_gu.fa
-echo "GGGGGNNNNNNNNNNNNNNNTTTTT" >> test_gu.fa
+echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test_gu.fa
 
 # Set EMBOSS environment for ACD files
 export EMBOSS_ACDROOT=$(pwd)/../acd
 export EMBOSS_DATA=$(pwd)/../data
 
 # Test with the installed binary
-if ../../dsrnascan/tools/einverted -sequence test_gu.fa -gap 12 -threshold 15 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
+if ../../dsrnascan/tools/einverted -sequence test_gu.fa -gap 20 -threshold 30 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
     echo "✓ G-U pairing detected successfully!"
 else
     echo "⚠ Warning: G-U pairing test inconclusive (may need ACD files at runtime)"
