@@ -54,6 +54,21 @@ jobs:
             echo -e ">test\nGGGGGGGGGGGGGGNNNNNNNNNNNNNNTTTTTTTTTTTTTT" | \
             dsrnascan/tools/einverted -sequence stdin -threshold 15 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | \
             head -20
+            
+            # Also test with our actual test sequences
+            echo "Testing with actual test sequences..."
+            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" | \
+            dsrnascan/tools/einverted -sequence stdin -threshold 30 -gap 12 -match 3 -mismatch -4 -outfile stdout -auto 2>&1 | \
+            head -20
+            
+            # Debug: Check what we actually have
+            echo "Current directory: $(pwd)"
+            echo "Directory contents:"
+            ls -la
+            echo "dsrnascan/tools contents:"
+            ls -la dsrnascan/tools/
+            echo "File type of einverted:"
+            file dsrnascan/tools/einverted
         else
             echo "ERROR: einverted binary not created!"
             ls -la dsrnascan/tools/
@@ -157,13 +172,20 @@ jobs:
       if: runner.os != 'Windows'
       run: |
         echo ">test_gu" > test.fasta
-        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
+        # Need sequences longer than 100bp for 100bp window
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
         echo ">test_gc" >> test.fasta
-        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
+        
+        # Verify test file was created correctly
+        echo "Test file contents:"
+        cat test.fasta
+        echo "Test file size: $(wc -c < test.fasta) bytes"
         
         # Test with dsrnascan (which will verify G-U wobble support internally)
         echo "Running dsrnascan functional test..."
-        dsrnascan test.fasta -w 100 -s 50 --score 30 -c 1 || {
+        # Just use default parameters - they work!
+        dsrnascan test.fasta || {
             echo "ERROR: dsrnascan failed!"
             echo "Debug info:"
             ls -la dsrnascan/tools/
@@ -177,12 +199,18 @@ jobs:
       shell: bash
       run: |
         echo ">test_gu" > test.fasta
-        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
+        # Need sequences longer than 100bp for 100bp window
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
         echo ">test_gc" >> test.fasta
-        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
+        echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
+        
+        # Verify test file was created correctly
+        echo "Test file contents:"
+        cat test.fasta
         
         # Run dsrnascan - it may fail on Windows without proper einverted
-        dsrnascan test.fasta -w 100 -s 50 --score 30 -c 1 || {
+        # Just use default parameters - they work!
+        dsrnascan test.fasta || {
             echo "Note: dsrnascan may have issues on Windows native environment"
             echo "Please use WSL or Docker for Windows instead"
             # Don't fail the build on Windows for now
@@ -211,6 +239,18 @@ jobs:
             sys.exit(1)
         
         print(f'✓ Results file: {results[0]}')
+        
+        # Check that we actually found dsRNA structures
+        with open(results[0], 'r') as f:
+            lines = f.readlines()
+            # First line is header, so we need at least 2 lines for results
+            if len(lines) < 2:
+                print(f'ERROR: No dsRNA structures found! File has only {len(lines)} lines')
+                print('This means einverted is not detecting G-U wobble pairs')
+                sys.exit(1)
+            else:
+                print(f'✓ Found {len(lines)-1} dsRNA structures')
+        
         print('All tests passed!')
 
   test-direct-install:

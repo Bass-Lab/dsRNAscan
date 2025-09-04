@@ -2247,6 +2247,13 @@ def main():
     
     # Print einverted info and verify G-U wobble support
     print(f"Using einverted binary: {einverted_bin}")
+    # Add more details about the binary being used
+    if os.path.exists(einverted_bin):
+        import stat
+        file_stat = os.stat(einverted_bin)
+        print(f"  Binary size: {file_stat.st_size:,} bytes")
+        print(f"  Binary permissions: {oct(file_stat.st_mode)[-3:]}")
+        print(f"  Binary path exists: ✓")
     if verify_gu_wobble_support():
         print("✓ G-U wobble pairing support verified")
     # If verification fails, warning was already printed in the function
