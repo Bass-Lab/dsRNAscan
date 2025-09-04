@@ -36,25 +36,51 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Check if we're on Windows
 import platform
-is_windows = platform.system().lower() == 'windows'
-einverted_name = "einverted.exe" if is_windows else "einverted"
+system = platform.system().lower()
+machine = platform.machine().lower()
+is_windows = system == 'windows'
 
-# Try multiple locations for einverted binary
-possible_paths = [
-    os.path.join(script_dir, "tools", einverted_name),  # Development location
-    os.path.join(script_dir, "..", "tools", einverted_name),  # Installed location
-    os.path.join(os.path.dirname(script_dir), "tools", einverted_name),  # Alternative installed
-    f"/usr/local/bin/{einverted_name}",  # System installation
-    f"/usr/bin/{einverted_name}",  # System installation
-]
-
-# On Windows, also check without .exe extension (in case of Cygwin/MSYS2)
+# Determine platform-specific binary name
 if is_windows:
-    possible_paths.extend([
-        os.path.join(script_dir, "tools", "einverted"),
-        os.path.join(script_dir, "..", "tools", "einverted"),
-        os.path.join(os.path.dirname(script_dir), "tools", "einverted"),
-    ])
+    platform_binary = "einverted_windows_x86_64.exe"
+    generic_binary = "einverted.exe"
+elif system == 'darwin':
+    if 'arm' in machine or 'aarch64' in machine:
+        platform_binary = "einverted_darwin_arm64"
+    else:
+        platform_binary = "einverted_darwin_x86_64"
+    generic_binary = "einverted"
+else:  # Linux
+    if 'aarch64' in machine:
+        platform_binary = "einverted_linux_aarch64"
+    else:
+        platform_binary = "einverted_linux_x86_64"
+    generic_binary = "einverted"
+
+# Try multiple locations - PREFER platform-specific binaries
+possible_paths = []
+
+# First try platform-specific binaries
+for base_dir in [
+    os.path.join(script_dir, "tools"),
+    os.path.join(script_dir, "..", "tools"),
+    os.path.join(os.path.dirname(script_dir), "tools"),
+]:
+    possible_paths.append(os.path.join(base_dir, platform_binary))
+
+# Then try generic binaries
+for base_dir in [
+    os.path.join(script_dir, "tools"),
+    os.path.join(script_dir, "..", "tools"),
+    os.path.join(os.path.dirname(script_dir), "tools"),
+]:
+    possible_paths.append(os.path.join(base_dir, generic_binary))
+
+# Finally try system installations
+possible_paths.extend([
+    f"/usr/local/bin/{generic_binary}",
+    f"/usr/bin/{generic_binary}",
+])
 
 einverted_bin = None
 for path in possible_paths:
@@ -65,10 +91,10 @@ for path in possible_paths:
 if not einverted_bin:
     # Last resort: check if einverted is in PATH
     from shutil import which
-    einverted_bin = which(einverted_name) or which("einverted")
+    einverted_bin = which(generic_binary) or which("einverted")
     
 if not einverted_bin:
-    einverted_bin = os.path.join(script_dir, "tools", einverted_name)  # Default for error message
+    einverted_bin = os.path.join(script_dir, "tools", platform_binary)  # Default for error message
 
 def smart_open(filename, mode='rt'):
     """

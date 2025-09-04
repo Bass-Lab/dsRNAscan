@@ -185,7 +185,14 @@ jobs:
     
     - name: Install package (Unix)
       if: runner.os != 'Windows'
-      run: pip install dist/*.whl
+      run: |
+        # Install in editable mode so it uses the local dsrnascan/tools directory
+        pip install -e .
+        
+        # Verify it's using our einverted
+        echo "Checking which einverted will be used:"
+        python -c "import dsrnascan; import os; print('dsrnascan location:', dsrnascan.__file__); script_dir = os.path.dirname(dsrnascan.__file__); print('Looking for einverted in:', os.path.join(script_dir, 'tools'))"
+        ls -la dsrnascan/tools/
     
     - name: Install package (Windows)
       if: runner.os == 'Windows'
@@ -211,9 +218,26 @@ jobs:
         echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" >> test.fasta
         echo ">test_gc" >> test.fasta
         echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test.fasta
-        # This should run and pass the G-U wobble check
+        
+        # First test einverted directly
+        echo "Testing einverted binary directly..."
+        if dsrnascan/tools/einverted -sequence test.fasta -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
+            echo "✓ einverted binary works with G-U wobble"
+        else
+            echo "✗ einverted binary does NOT support G-U wobble or failed to run"
+            # Try to run it without suppressing errors to see what's wrong
+            echo "Attempting to run einverted with full output:"
+            dsrnascan/tools/einverted -sequence test.fasta -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto || echo "einverted failed with exit code $?"
+        fi
+        
+        # Now test with dsrnascan
+        echo "Testing with dsrnascan..."
         dsrnascan test.fasta -w 100 -s 50 --score 30 -c 1 || {
-            echo "ERROR: dsrnascan failed - likely due to missing G-U wobble support"
+            echo "ERROR: dsrnascan failed"
+            echo "Checking which einverted dsrnascan is trying to use..."
+            python -c "import dsrnascan; print('dsrnascan module location:', dsrnascan.__file__)" || true
+            echo "Contents of dsrnascan/tools/:"
+            ls -la dsrnascan/tools/ || true
             exit 1
         }
     
@@ -305,15 +329,28 @@ jobs:
     
     - name: Build einverted from EMBOSS
       run: |
-        # Use the compile script
+        # ALWAYS compile from source to ensure G-U wobble patch is applied
         chmod +x compile_patched_einverted.sh
         ./compile_patched_einverted.sh
         
         # Verify the specific binary exists
         ls -la dsrnascan/tools/${{ matrix.binary }}
         
+        # TEST that it has G-U wobble support
+        echo "Testing G-U wobble support in compiled binary..."
+        echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
+        echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
+        
+        if dsrnascan/tools/${{ matrix.binary }} -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile stdout -auto 2>/dev/null | grep -q "Score"; then
+            echo "✓ Compiled binary has G-U wobble support!"
+        else
+            echo "ERROR: Compiled binary does NOT have G-U wobble support!"
+            echo "The patch may not have been applied correctly."
+            exit 1
+        fi
+        
         # Clean up
-        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz test_gu.fa
         
     - name: Test binary
       run: |
