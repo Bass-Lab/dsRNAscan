@@ -52,31 +52,52 @@ jobs:
             EXPECTED_BINARY="dsrnascan/tools/einverted_linux_x86_64"
         fi
         
+        BINARY_WORKS=false
+        
         if [ -f "$EXPECTED_BINARY" ] && [ -x "$EXPECTED_BINARY" ]; then
-            echo "Using pre-built binary: $EXPECTED_BINARY"
-            # Copy as main einverted
-            cp "$EXPECTED_BINARY" dsrnascan/tools/einverted
-            chmod +x dsrnascan/tools/einverted
+            echo "Found pre-built binary: $EXPECTED_BINARY"
+            echo "Testing G-U wobble support in pre-built binary..."
+            
+            # Test the SPECIFIC platform binary, not the generic one
+            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
+            echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
+            
+            if "$EXPECTED_BINARY" -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
+                echo "✓ Pre-built binary has G-U wobble support!"
+                # Copy as main einverted
+                cp "$EXPECTED_BINARY" dsrnascan/tools/einverted
+                chmod +x dsrnascan/tools/einverted
+                BINARY_WORKS=true
+            else
+                echo "⚠ Pre-built binary does NOT have G-U wobble support, will compile from source..."
+            fi
+            rm -f test_gu.fa test.out
         else
-            echo "Pre-built binary not found, compiling from source..."
-            # Use the compile script
+            echo "Pre-built binary not found at $EXPECTED_BINARY"
+        fi
+        
+        # If pre-built binary doesn't work or doesn't exist, compile from source
+        if [ "$BINARY_WORKS" = false ]; then
+            echo "Compiling einverted from source with G-U wobble patch..."
             chmod +x compile_patched_einverted.sh
             ./compile_patched_einverted.sh
+            
+            # Test the newly compiled binary
+            echo "Testing compiled binary..."
+            echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
+            echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
+            
+            if dsrnascan/tools/einverted -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
+                echo "✓ Successfully compiled einverted with G-U wobble support!"
+            else
+                echo "ERROR: Compiled binary still doesn't support G-U wobble pairing!"
+                exit 1
+            fi
+            rm -f test_gu.fa test.out
         fi
         
         # Verify the binary was created
         ls -la dsrnascan/tools/einverted*
-        
-        # Test G-U wobble support explicitly
-        echo "Testing G-U wobble pairing support..."
-        echo -e ">test_gu\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCTTCTCTCTCCTTCTCTCTCCTTCTCTCTCCTTCTCTCTC" > test_gu.fa
-        echo -e ">test_gc\nGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
-        if dsrnascan/tools/einverted -sequence test_gu.fa -threshold 30 -gap 20 -match 3 -mismatch -4 -outfile test.out -auto 2>/dev/null && grep -q "Score" test.out; then
-            echo "✓ G-U wobble pairing verified!"
-        else
-            echo "ERROR: G-U wobble pairing NOT supported!"
-            exit 1
-        fi
         
         # Clean up to save space
         rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz test_gu.fa test.out
