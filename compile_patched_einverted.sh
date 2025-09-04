@@ -104,29 +104,9 @@ else
 fi
 chmod +x "${TARGET_DIR}/einverted"
 
-# Copy ACD file so einverted can run standalone
-if [ -f "acd/einverted.acd" ]; then
-    mkdir -p "${TARGET_DIR}/acd"
-    cp acd/einverted.acd "${TARGET_DIR}/acd/"
-fi
-
-# Also save platform-specific version
-PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-
-if [[ "$PLATFORM" == "darwin" ]]; then
-    if [[ "$ARCH" == "arm64" ]] || [[ "$ARCH" == "aarch64" ]]; then
-        cp "${TARGET_DIR}/einverted" "${TARGET_DIR}/einverted_darwin_arm64"
-    else
-        cp "${TARGET_DIR}/einverted" "${TARGET_DIR}/einverted_darwin_x86_64"
-    fi
-elif [[ "$PLATFORM" == "linux" ]]; then
-    if [[ "$ARCH" == "aarch64" ]]; then
-        cp "${TARGET_DIR}/einverted" "${TARGET_DIR}/einverted_linux_aarch64"
-    else
-        cp "${TARGET_DIR}/einverted" "${TARGET_DIR}/einverted_linux_x86_64"
-    fi
-fi
+# Skip ACD file and platform-specific copies - not needed
+# einverted works fine without the ACD file
+# We always use generic "einverted" name anyway
 
 echo "✓ Successfully compiled einverted with G-U wobble patch!"
 echo ""
@@ -150,5 +130,7 @@ cd "${ORIGINAL_DIR}"
 # Clean up test file
 rm -f EMBOSS-6.6.0/emboss/test_gu.fa
 
-echo "Done! Patched einverted installed in dsrnascan/tools/"
+echo "Done! Patched einverted installed in ${TARGET_DIR}/"
+echo "Full path: ${TARGET_DIR}/einverted"
+echo "File size: $(ls -lh ${TARGET_DIR}/einverted | awk '{print $5}')"
 echo "Note: einverted may need EMBOSS_ACDROOT environment variable set to locate ACD files"
