@@ -38,35 +38,15 @@ jobs:
     - name: Build einverted from EMBOSS (Unix)
       if: runner.os != 'Windows'
       run: |
-        # We need EMBOSS to compile the real einverted.c with G-U wobble support
-        mkdir -p dsrnascan/tools
+        # Use the existing compile script which handles everything
+        chmod +x compile_patched_einverted.sh
+        ./compile_patched_einverted.sh
         
-        # Download minimal EMBOSS (just what we need)
-        wget -q https://github.com/EMBOSS/EMBOSS/archive/refs/tags/rel-6-6-0.tar.gz -O emboss.tar.gz
-        tar -xzf emboss.tar.gz
-        cd EMBOSS-rel-6-6-0
-        
-        # Apply G-U wobble patch if we have it
-        if [ -f ../einverted.patch ]; then
-          patch -p1 < ../einverted.patch
-        else
-          # Copy our modified einverted.c over the original
-          cp ../einverted.c emboss/einverted.c
-        fi
-        
-        # Quick build - just what we need for einverted
-        ./configure --prefix=$PWD/../build --without-x --without-pngdriver --disable-shared
-        make -C ajax
-        make -C nucleus  
-        make -C emboss einverted
-        
-        # Copy the binary
-        cp emboss/.libs/einverted ../dsrnascan/tools/einverted
-        chmod +x ../dsrnascan/tools/einverted
-        cd ..
+        # Verify the binary was created
+        ls -la dsrnascan/tools/einverted*
         
         # Clean up to save space
-        rm -rf EMBOSS-rel-6-6-0 emboss.tar.gz
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
     
     - name: Build einverted (Windows)
       if: runner.os == 'Windows'
@@ -184,33 +164,16 @@ jobs:
     
     - name: Build einverted from EMBOSS
       run: |
-        mkdir -p dsrnascan/tools
+        # Use the compile script - it creates platform-specific binaries
+        chmod +x compile_patched_einverted.sh
+        ./compile_patched_einverted.sh
         
-        # Download EMBOSS source
-        wget -q https://github.com/EMBOSS/EMBOSS/archive/refs/tags/rel-6-6-0.tar.gz -O emboss.tar.gz
-        tar -xzf emboss.tar.gz
-        cd EMBOSS-rel-6-6-0
-        
-        # Apply patch or use our modified version
-        if [ -f ../einverted.patch ]; then
-          patch -p1 < ../einverted.patch
-        else
-          cp ../einverted.c emboss/einverted.c
-        fi
-        
-        # Build einverted
-        ./configure --prefix=$PWD/../build --without-x --without-pngdriver --disable-shared
-        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) -C ajax
-        make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) -C nucleus
-        make -C emboss einverted
-        
-        # Copy binary with platform name
-        cp emboss/.libs/einverted ../dsrnascan/tools/${{ matrix.binary }}
-        chmod +x ../dsrnascan/tools/${{ matrix.binary }}
-        cd ..
+        # The script creates the platform-specific binary already
+        # Just verify it exists
+        ls -la dsrnascan/tools/${{ matrix.binary }}
         
         # Clean up
-        rm -rf EMBOSS-rel-6-6-0 emboss.tar.gz
+        rm -rf EMBOSS-6.6.0 EMBOSS-6.6.0.tar.gz
         
     - name: Test binary
       run: |

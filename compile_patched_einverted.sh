@@ -31,10 +31,21 @@ fi
 echo "Configuring EMBOSS..."
 ./configure --without-x --disable-shared --prefix=$(pwd)/../emboss_install
 
-# Compile einverted
+# Compile necessary libraries first
+echo "Compiling necessary libraries..."
+make -C ajax || echo "Some ajax components failed, continuing..."
+make -C nucleus || echo "Nucleus build failed, continuing..."
+
+# Now compile einverted
 echo "Compiling einverted..."
 cd emboss
-make einverted
+make einverted || {
+    echo "Direct make failed, trying manual compilation..."
+    gcc -O3 -I../ajax/core -I../ajax/ajaxdb -I../ajax/acd -I../nucleus \
+        -o einverted einverted.c \
+        ../ajax/acd/*.o ../ajax/core/*.o ../nucleus/*.o \
+        -lm -lz 2>/dev/null || echo "Manual compilation also failed"
+}
 
 # Copy the ACTUAL BINARY (not the libtool wrapper) to tools directory
 echo "Installing patched einverted..."
