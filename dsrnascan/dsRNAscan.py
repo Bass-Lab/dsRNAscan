@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.3.4'
+__version__ = '0.4.1'
 __author__ = 'Bass Lab'
 
 import os
@@ -29,7 +29,16 @@ import time
 # Set environment variables for locale
 os.environ['LC_ALL'] = 'C.UTF-8'
 os.environ['LANG'] = 'C.UTF-8'
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
+# Try to set locale, but don't fail if unavailable
+try:
+    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+except locale.Error:
+    try:
+        locale.setlocale(locale.LC_ALL, 'C.UTF-8')
+    except locale.Error:
+        # Fall back to default locale
+        pass
 
 # Determine the directory of this script and set the local path for einverted
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2247,6 +2256,13 @@ def main():
     
     # Print einverted info and verify G-U wobble support
     print(f"Using einverted binary: {einverted_bin}")
+    # Add more details about the binary being used
+    if os.path.exists(einverted_bin):
+        import stat
+        file_stat = os.stat(einverted_bin)
+        print(f"  Binary size: {file_stat.st_size:,} bytes")
+        print(f"  Binary permissions: {oct(file_stat.st_mode)[-3:]}")
+        print(f"  Binary path exists: ✓")
     if verify_gu_wobble_support():
         print("✓ G-U wobble pairing support verified")
     # If verification fails, warning was already printed in the function
