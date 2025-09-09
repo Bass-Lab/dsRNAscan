@@ -14,8 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        exclude:
+          # macOS doesn't support Python 3.8
+          - os: macos-latest
+            python-version: '3.8'
     
     steps:
     - uses: actions/checkout@v4
@@ -25,8 +29,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-    - name: Build einverted from EMBOSS (Unix)
-      if: runner.os != 'Windows'
+    - name: Build einverted from EMBOSS
       run: |
         # Compile einverted with G-U wobble patch first
         chmod +x compile_patched_einverted.sh
@@ -34,16 +37,6 @@ jobs:
         
         # Verify the binary was created
         ls -la dsrnascan/tools/einverted*
-    
-    - name: Create placeholder einverted (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        # Windows can't compile einverted easily, create placeholder
-        mkdir -p dsrnascan/tools
-        echo '#!/bin/bash' > dsrnascan/tools/einverted
-        echo 'echo "einverted not available on Windows native - use WSL or Docker"' >> dsrnascan/tools/einverted
-        echo 'exit 1' >> dsrnascan/tools/einverted
     
     - name: Install package
       run: |
@@ -62,27 +55,16 @@ jobs:
         echo "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGNNNNNNNNNNNNNNCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" >> test_gu.fa
         
         # Run dsrnascan which should show G-U wobble verification in log
-        dsrnascan test_gu.fa -w 100 -s 50 --score 30 -c 1 2>&1 | tee dsrnascan.log || {
-            if [ "${{ runner.os }}" == "Windows" ]; then
-                echo "Expected failure on Windows (no einverted binary)"
-                exit 0
-            else
-                echo "ERROR: dsrnascan failed!"
-                cat dsrnascan.log
-                exit 1
-            fi
-        }
+        dsrnascan test_gu.fa -w 100 -s 50 --score 30 -c 1 2>&1 | tee dsrnascan.log
         
-        # Check that G-U wobble was verified (Unix only)
-        if [ "${{ runner.os }}" != "Windows" ]; then
-            if grep -q "G-U wobble pairing support verified" dsrnascan.log; then
-                echo "✓ G-U wobble support confirmed"
-            else
-                echo "ERROR: G-U wobble support not detected!"
-                cat dsrnascan.log
-                exit 1
-            fi
-            
-            # Verify output was created
-            ls -la dsrnascan_*/
+        # Check that G-U wobble was verified
+        if grep -q "G-U wobble pairing support verified" dsrnascan.log; then
+            echo "✓ G-U wobble support confirmed"
+        else
+            echo "ERROR: G-U wobble support not detected!"
+            cat dsrnascan.log
+            exit 1
         fi
+        
+        # Verify output was created
+        ls -la dsrnascan_*/

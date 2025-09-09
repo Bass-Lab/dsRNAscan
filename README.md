@@ -1,7 +1,8 @@
 # dsRNAscan
 
 [![CI Tests](https://github.com/Bass-Lab/dsRNAscan/actions/workflows/ci-simple.yml/badge.svg)](https://github.com/Bass-Lab/dsRNAscan/actions/workflows/ci-simple.yml)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/Python-3.8%2B%20(Linux)%20|%203.9%2B%20(macOS)-blue.svg)](https://www.python.org/downloads/)
+[![Platforms](https://img.shields.io/badge/Platforms-Linux%20|%20macOS-green.svg)](https://github.com/Bass-Lab/dsRNAscan)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 **dsRNAscan** is a bioinformatics tool for genome-wide identification of **double-stranded RNA (dsRNA) structures**. It uses a sliding window approach to detect inverted repeats that can form dsRNA secondary structures, with special support for **G-U wobble base pairing**.
@@ -28,8 +29,12 @@ dsrnascan sequence.fasta -w 5000 --min_bp 15
 
 ## 📋 Requirements
 
-- **Python 3.8+**
-- **Dependencies** (automatically installed):
+### Platform Compatibility
+- **Linux**: ✅ Python 3.8+ 
+- **macOS**: ✅ Python 3.9+ (3.8 not supported)
+- **Windows**: ❌ Not supported (use WSL or Docker)
+
+### Dependencies (automatically installed):
   - numpy ≥1.19
   - pandas ≥1.1
   - biopython ≥1.78

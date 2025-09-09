@@ -1,20 +1,53 @@
+# Essential files for package
 include README.md
 include LICENSE
-include einverted.patch
-include einverted.c
-include compile_patched_einverted.sh
-include compile_einverted_windows.bat
-include compile_einverted_windows.sh
 include requirements.txt
-recursive-include dsrnascan/tools *
-recursive-include conda-recipe *
-# Exclude overlap_analyzer to reduce package size
+
+# Files needed for einverted compilation
+include einverted.patch
+include compile_patched_einverted.sh
+
+# Exclude einverted binary from wheels (will be compiled on install)
+exclude dsrnascan/tools/einverted
+exclude dsrnascan/tools/einverted_*
+
+# Exclude unnecessary files
 prune overlap_analyzer
-exclude test_sequence.fa
+prune conda-recipe
+prune test_data
+prune docker-test
+prune .github
+exclude compile_einverted_windows.bat
+exclude compile_einverted_windows.sh
+exclude einverted.c
 exclude *.dsRNApredictions.bp
 exclude *_merged_results.txt
 exclude *_ein_results.txt
+exclude test_*.fa
+exclude test_*.fasta
+exclude *.parquet
+exclude *.html
+exclude Dockerfile*
+exclude tox.ini
+exclude setup.cfg
+exclude .gitignore
+exclude .gitattributes
+exclude build_*.sh
+exclude upload_*.sh
+exclude test_*.sh
+exclude test_*.py
+exclude benchmark_*.py
+exclude analyze_*.py
+exclude validate_*.py
+exclude visualize_*.py
+exclude *_test.py
+exclude CLAUDE.md
+exclude *.bak
+exclude *.backup
+
+# Global exclusions
 global-exclude *.pyc
 global-exclude __pycache__
 global-exclude .DS_Store
-global-exclude *.parquet
+global-exclude *.swp
+global-exclude *~
