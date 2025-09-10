@@ -107,7 +107,7 @@ dsrnascan --help
 - `--gaps`: Gap penalty (default: 12)
 
 **Algorithm Options:**
-- `--algorithm`: Inverted repeat algorithm (einverted or iupacpal)
+- `--algorithm`: Inverted repeat algorithm (einverted only currently, but more in future)
 - `--eliminate-nested`: Remove nested dsRNAs (default: True)
 - `--chunk-size`: Windows per chunk for DataFrame processing (default: 10000)
 
