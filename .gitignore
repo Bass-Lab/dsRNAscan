@@ -83,3 +83,7 @@ dsrnascan/tools/acd/
 *.tmp
 *.temp
 *.log
+
+# pypirc file
+.pypirc
+pypyirc.template

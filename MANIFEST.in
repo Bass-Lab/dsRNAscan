@@ -7,9 +7,8 @@ include requirements.txt
 include einverted.patch
 include compile_patched_einverted.sh
 
-# Exclude einverted binary from wheels (will be compiled on install)
-exclude dsrnascan/tools/einverted
-exclude dsrnascan/tools/einverted_*
+# Include the einverted binary (platform-specific wheels include the right one)
+include dsrnascan/tools/einverted
 
 # Exclude unnecessary files
 prune overlap_analyzer

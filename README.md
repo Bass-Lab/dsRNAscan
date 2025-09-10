@@ -259,7 +259,6 @@ conda install -c bioconda emboss
 If you get this error, einverted is not in your PATH. Solutions:
 1. Compile the patched version as shown above
 2. Set environment variable: `export EINVERTED_PATH=/path/to/einverted`
-3. Or use the package without functional testing: `dsrnascan --help` works without einverted
 
 ### "ModuleNotFoundError: No module named 'ViennaRNA'"
 Install ViennaRNA Python bindings:
