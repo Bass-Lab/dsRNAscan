@@ -37,7 +37,7 @@ jobs:
             arch: x86_64
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up build environment (Linux)
       if: runner.os == 'Linux'
@@ -142,7 +142,7 @@ jobs:
       shell: bash
     
     - name: Upload binary artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: einverted-${{ matrix.platform }}
         path: artifacts/*
@@ -154,10 +154,10 @@ jobs:
     needs: build-binaries
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         path: platform_binaries
     
@@ -173,7 +173,7 @@ jobs:
         ls -la dsrnascan/tools/platform_binaries/
     
     - name: Upload combined artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: all-platform-binaries
         path: dsrnascan/tools/platform_binaries/*
