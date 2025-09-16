@@ -9,6 +9,7 @@ include compile_patched_einverted.sh
 
 # Include the einverted binary (platform-specific wheels include the right one)
 include dsrnascan/tools/einverted
+recursive-include dsrnascan/tools/platform_binaries *
 
 # Exclude unnecessary files
 prune overlap_analyzer

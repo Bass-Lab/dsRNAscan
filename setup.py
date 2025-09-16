@@ -1,82 +1,75 @@
 import os
 import sys
-import subprocess
 import platform
 from setuptools import setup, find_packages
-from setuptools.command.install import install
-from setuptools.command.develop import develop
-from setuptools.command.build_py import build_py
 
 # Version information
-__version__ = '0.4.3'
+__version__ = '0.4.6'
 
-def compile_einverted_now():
-    """Compile einverted immediately when setup.py runs"""
-    print("\n" + "="*60)
-    print("dsRNAscan setup: Checking for einverted...")
-    print("="*60)
+def get_platform_binary():
+    """Determine which pre-compiled einverted binary to use"""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
     
-    # Determine paths
+    if system == 'linux':
+        if machine in ['x86_64', 'amd64']:
+            return 'einverted_linux_x86_64'
+        elif machine in ['aarch64', 'arm64']:
+            return 'einverted_linux_arm64'
+        elif machine in ['i386', 'i686']:
+            return 'einverted_linux_i386'
+    elif system == 'darwin':  # macOS
+        if machine in ['arm64', 'aarch64']:
+            return 'einverted_macos_arm64'
+        elif machine in ['x86_64', 'amd64']:
+            return 'einverted_macos_x86_64'
+    elif system == 'windows':
+        return 'einverted_windows_x86_64.exe'
+    
+    # Fallback to generic Linux
+    return 'einverted_linux_x86_64'
+
+def setup_einverted():
+    """Set up the appropriate einverted binary"""
     setup_dir = os.path.dirname(os.path.abspath(__file__))
     tools_dir = os.path.join(setup_dir, 'dsrnascan', 'tools')
-    os.makedirs(tools_dir, exist_ok=True)
+    platform_binaries_dir = os.path.join(tools_dir, 'platform_binaries')
     
-    target_binary = os.path.join(tools_dir, 'einverted')
+    # Determine which binary to use
+    binary_name = get_platform_binary()
+    source_binary = os.path.join(platform_binaries_dir, binary_name)
     
-    # Check if already compiled
-    if os.path.exists(target_binary):
-        with open(target_binary, 'rb') as f:
-            header = f.read(4)
-        if header in [b'\x7fELF', b'\xcf\xfa', b'\xce\xfa', b'\xca\xfe']:
-            size = os.path.getsize(target_binary)
-            print(f"✓ Found existing einverted binary ({size} bytes)")
-            return
+    # Target location (without platform suffix)
+    if binary_name.endswith('.exe'):
+        target_binary = os.path.join(tools_dir, 'einverted.exe')
+    else:
+        target_binary = os.path.join(tools_dir, 'einverted')
     
-    # Need to compile
-    compile_script = os.path.join(setup_dir, 'compile_patched_einverted.sh')
-    patch_file = os.path.join(setup_dir, 'einverted.patch')
-    
-    if not os.path.exists(compile_script) or not os.path.exists(patch_file):
-        print("WARNING: Cannot find compilation files")
-        print("  einverted will not be available")
-        return
-    
-    print("Compiling einverted with G-U wobble patch...")
-    print("This may take a few minutes...")
-    
-    try:
-        # Make script executable
-        os.chmod(compile_script, 0o755)
+    # Check if source binary exists
+    if os.path.exists(source_binary):
+        print(f"Using pre-compiled einverted: {binary_name}")
+        # Copy to target location if needed
+        if not os.path.exists(target_binary) or os.path.getmtime(source_binary) > os.path.getmtime(target_binary):
+            import shutil
+            shutil.copy2(source_binary, target_binary)
+            # Make executable on Unix-like systems
+            if not binary_name.endswith('.exe'):
+                os.chmod(target_binary, 0o755)
+            print(f"✓ Installed einverted binary for {platform.system()} {platform.machine()}")
+    else:
+        print(f"WARNING: No pre-compiled binary found for {platform.system()} {platform.machine()}")
+        print(f"  Looking for: {source_binary}")
+        print("  einverted functionality may not be available")
         
-        # Run compilation
-        env = os.environ.copy()
-        env['TARGET_DIR'] = tools_dir
-        
-        result = subprocess.run(
-            ['bash', compile_script],
-            cwd=setup_dir,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=300
-        )
-        
-        if result.returncode == 0 and os.path.exists(target_binary):
-            size = os.path.getsize(target_binary)
-            print(f"✓ Successfully compiled einverted ({size} bytes)")
-        else:
-            print("WARNING: Compilation failed")
-            print("  Install will continue but einverted won't work")
-            if result.stderr:
-                print(f"  Error: {result.stderr[:200]}")
-                
-    except Exception as e:
-        print(f"WARNING: Could not compile einverted: {e}")
-        print("  Install will continue but einverted won't work")
+        # List available binaries
+        if os.path.exists(platform_binaries_dir):
+            available = os.listdir(platform_binaries_dir)
+            if available:
+                print(f"  Available binaries: {', '.join(available)}")
 
-# Compile immediately when setup.py is run for install/build
+# Set up einverted when installing
 if any(cmd in sys.argv for cmd in ['install', 'build', 'bdist_wheel', 'develop']):
-    compile_einverted_now()
+    setup_einverted()
 
 # Read long description
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -98,7 +91,10 @@ setup(
     },
     packages=['dsrnascan'],
     package_data={
-        'dsrnascan': ['tools/*'],
+        'dsrnascan': [
+            'tools/*',
+            'tools/platform_binaries/*',
+        ],
     },
     include_package_data=True,
     classifiers=[
@@ -114,6 +110,7 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Operating System :: POSIX :: Linux",
         "Operating System :: MacOS :: MacOS X",
+        "Operating System :: Microsoft :: Windows",
     ],
     python_requires='>=3.8',
     install_requires=[
@@ -139,5 +136,4 @@ setup(
             'dsrna-browse=dsrnascan.browse_results:main',
         ],
     },
-    zip_safe=False,
 )

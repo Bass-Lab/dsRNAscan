@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.4.2'
+__version__ = '0.4.6'
 __author__ = 'Bass Lab'
 
 import os
@@ -29,6 +29,13 @@ import time
 # Set environment variables for locale
 os.environ['LC_ALL'] = 'C.UTF-8'
 os.environ['LANG'] = 'C.UTF-8'
+
+# Fix einverted path issues on Linux
+try:
+    from .fix_einverted_paths import setup_einverted_environment
+    setup_einverted_environment()
+except:
+    pass  # If it fails, continue anyway
 
 # Try to set locale, but don't fail if unavailable
 try:
@@ -55,35 +62,33 @@ if is_windows:
     generic_binary = "einverted.exe"
 elif system == 'darwin':
     if 'arm' in machine or 'aarch64' in machine:
-        platform_binary = "einverted_darwin_arm64"
+        platform_binary = "einverted_macos_arm64"  # Changed from darwin to macos
     else:
-        platform_binary = "einverted_darwin_x86_64"
+        platform_binary = "einverted_macos_x86_64"  # Changed from darwin to macos
     generic_binary = "einverted"
 else:  # Linux
-    if 'aarch64' in machine:
-        platform_binary = "einverted_linux_aarch64"
+    if 'aarch64' in machine or 'arm64' in machine:
+        platform_binary = "einverted_linux_arm64"  # Changed from aarch64 to arm64
     else:
         platform_binary = "einverted_linux_x86_64"
     generic_binary = "einverted"
 
-# Try multiple locations - PREFER generic einverted (what CI builds)
+# Try platform-specific binaries ONLY - no generic fallback
 possible_paths = []
 
-# First try generic binaries (what compile script creates)
-for base_dir in [
-    os.path.join(script_dir, "tools"),
-    os.path.join(script_dir, "..", "tools"),
-    os.path.join(os.path.dirname(script_dir), "tools"),
-]:
-    possible_paths.append(os.path.join(base_dir, generic_binary))
+# Only use platform-specific binaries in platform_binaries folder
+tools_dir = os.path.join(script_dir, "tools")
+platform_dir = os.path.join(tools_dir, "platform_binaries")
+if os.path.exists(platform_dir):
+    possible_paths.append(os.path.join(platform_dir, platform_binary))
 
-# Then try platform-specific binaries (for pre-built distribution)
-for base_dir in [
-    os.path.join(script_dir, "tools"),
-    os.path.join(script_dir, "..", "tools"),
-    os.path.join(os.path.dirname(script_dir), "tools"),
-]:
-    possible_paths.append(os.path.join(base_dir, platform_binary))
+# Also check parent directory structure
+parent_tools = os.path.join(os.path.dirname(script_dir), "tools")
+if os.path.exists(parent_tools):
+    possible_paths.append(os.path.join(parent_tools, generic_binary))
+    platform_dir = os.path.join(parent_tools, "platform_binaries")
+    if os.path.exists(platform_dir):
+        possible_paths.append(os.path.join(platform_dir, platform_binary))
 
 # Finally try system installations
 possible_paths.extend([
@@ -98,12 +103,8 @@ for path in possible_paths:
         break
 
 if not einverted_bin:
-    # Last resort: check if einverted is in PATH
-    from shutil import which
-    einverted_bin = which(generic_binary) or which("einverted")
-    
-if not einverted_bin:
-    einverted_bin = os.path.join(script_dir, "tools", platform_binary)  # Default for error message
+    # No fallback - platform-specific binary is required
+    einverted_bin = os.path.join(script_dir, "tools", "platform_binaries", platform_binary)  # Default for error message
 
 def smart_open(filename, mode='rt'):
     """
@@ -151,7 +152,7 @@ def verify_gu_wobble_support():
         result = subprocess.run(
             [einverted_bin, '-sequence', 'stdin', '-threshold', '15', 
              '-gap', '12', '-match', '3', '-mismatch', '-4',
-             '-outfile', 'stdout', '-auto'],
+             '-outfile', 'stdout'],
             input=test_sequence,
             capture_output=True, 
             text=True, 

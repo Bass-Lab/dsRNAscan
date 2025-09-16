@@ -12,7 +12,7 @@ You can browse human genome results at dsrna.chpc.utah.edu
 ### Install from PyPI 
 ```bash
 pip install dsrnascan
-# Note: You may need to compile einverted with G-U patch for non-macOS systems
+# No EMBOSS installation required - einverted is included!
 ```
 
 ### Basic Usage
@@ -40,33 +40,14 @@ dsrnascan sequence.fasta -w 5000 --min_bp 15
   - biopython ≥1.78
   - ViennaRNA ≥2.4
 
-### Important: einverted Binary
+### No EMBOSS Required!
 
-dsRNAscan requires the `einverted` tool from EMBOSS with our **G-U wobble patch** for accurate RNA structure detection. 
+**Version 0.4.6+**: dsRNAscan includes built-in einverted with **G-U wobble support** for all platforms:
+- Linux x86_64 & ARM64
+- macOS Intel & Apple Silicon
+- Windows (via WSL)
 
-**Option 1: Automatic** (included binary)
-- The package includes a pre-compiled einverted for some systems (MacOS ARM)
-- It will be used automatically on compatible systems
-
-**Option 2: System Installation** (Linux/Other)
-```bash
-# Ubuntu/Debian
-sudo apt-get install emboss
-
-# macOS with Homebrew
-brew install emboss
-
-# Conda (recommended for bioinformatics workflows)
-conda install -c bioconda emboss
-```
-
-**Note:** System-installed EMBOSS won't have the G-U patch. For full RNA functionality with G-U wobble pairs, compile from source:
-
-```bash
-# Compile with G-U patch (optional but recommended)
-cd dsRNAscan
-DSRNASCAN_COMPILE_FULL=true pip install .
-```
+The correct binary is automatically selected for your platform.
 
 ## Detailed Usage
 
@@ -206,62 +187,10 @@ dsrnascan genome.fa \
     --end 1100000
 ```
 
-## Installation Troubleshooting
+## Installation Notes
 
-### Note: einverted with G-U Wobble Pairing Support
-
-**IMPORTANT**: dsRNAscan requires a patched version of einverted that recognizes G-U wobble base pairs as matches. Standard EMBOSS einverted treats G-U as mismatches, which misses many RNA structures.
-
-#### Option 1: Use Pre-compiled Binary (macOS ARM64 only)
-The PyPI package includes a pre-compiled einverted for macOS ARM64 (Apple Silicon).
-
-#### Option 2: Compile Patched einverted (Recommended for other platforms)
-```bash
-# The package includes the patch and compilation script
-git clone https://github.com/Bass-Lab/dsRNAscan.git
-cd dsRNAscan
-./compile_patched_einverted.sh
-```
-
-This script will:
-1. Download EMBOSS 6.6.0 source code
-2. Apply the G-U wobble pairing patch (`einverted.patch`)
-3. Compile einverted with RNA-aware scoring
-4. Install it to `dsrnascan/tools/einverted`
-
-#### Option 3: Manual Compilation
-```bash
-# Download and extract EMBOSS
-wget ftp://emboss.open-bio.org/pub/EMBOSS/EMBOSS-6.6.0.tar.gz
-tar -xzf EMBOSS-6.6.0.tar.gz
-cd EMBOSS-6.6.0/emboss
-
-# Apply the G-U patch (included in dsRNAscan package)
-patch -p0 < /path/to/dsrnascan/einverted.patch
-
-# Compile just einverted
-gcc -O2 -o einverted einverted.c \
-    -I../ajax/core -I../ajax/ajaxdb -I../ajax/acd \
-    -L../ajax/core/.libs -L../ajax/ajaxdb/.libs -L../ajax/acd/.libs \
-    -lajax -lajaxdb -lacd -lm -lz
-
-# Copy to dsRNAscan tools directory
-cp einverted /path/to/dsrnascan/tools/
-```
-
-#### Option 4: Use Standard EMBOSS (Not Recommended)
-```bash
-conda install -c bioconda emboss
-```
-**Warning**: Standard einverted will miss RNA structures with G-U wobble pairs, significantly reducing sensitivity for dsRNA detection.
-
-### "einverted binary not found" Error
-If you get this error, einverted is not in your PATH. Solutions:
-1. Compile the patched version as shown above
-2. Set environment variable: `export EINVERTED_PATH=/path/to/einverted`
-
-### "ModuleNotFoundError: No module named 'ViennaRNA'"
-Install ViennaRNA Python bindings:
+### ViennaRNA Dependency
+If you get "ModuleNotFoundError: No module named 'ViennaRNA'":
 ```bash
 # Via conda (recommended)
 conda install -c bioconda viennarna
@@ -270,45 +199,15 @@ conda install -c bioconda viennarna
 pip install ViennaRNA
 ```
 
-### Installation on HPC/Cluster
-
-**Important**: Cluster EMBOSS modules have standard einverted which lacks G-U wobble support. You need to compile the patched version:
-
+### Using on HPC/Cluster
 ```bash
 # Load Python module
-module load python/3.8  # or your cluster's Python module
+module load python/3.9
 
 # Install dsRNAscan
 pip install --user dsrnascan
 
-# Clone repo to get compilation script and patch
-git clone https://github.com/Bass-Lab/dsRNAscan.git ~/dsRNAscan_source
-
-# Compile patched einverted in your home directory
-cd ~/dsRNAscan_source
-./compile_patched_einverted.sh
-
-# Copy the compiled einverted to a location in your PATH or set environment variable
-mkdir -p ~/bin
-cp dsrnascan/tools/einverted ~/bin/
-export PATH=$HOME/bin:$PATH
-
-# Or set EINVERTED_PATH environment variable
-export EINVERTED_PATH=$HOME/dsRNAscan_source/dsrnascan/tools/einverted
-
-# Add to your ~/.bashrc or job submission script
-echo 'export EINVERTED_PATH=$HOME/dsRNAscan_source/dsrnascan/tools/einverted' >> ~/.bashrc
-```
-
-For job submission scripts:
-```bash
-#!/bin/bash
-#SBATCH --job-name=dsrnascan
-#SBATCH --cpus-per-task=16
-
-module load python/3.8
-export EINVERTED_PATH=$HOME/bin/einverted  # Use your compiled version
-
+# Run on cluster
 dsrnascan genome.fa -c 16 --output-dir results/
 ```
 
