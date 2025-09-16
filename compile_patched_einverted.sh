@@ -40,9 +40,9 @@ else
     echo "Patch already applied"
 fi
 
-# Configure EMBOSS
+# Configure EMBOSS (minimal build without graphics)
 echo "Configuring EMBOSS..."
-./configure --without-x --disable-shared --prefix=$(pwd)/../emboss_install
+./configure --without-x --disable-shared --without-pngdriver --without-pdf --without-plplot --prefix=$(pwd)/../emboss_install
 
 # Compile necessary libraries first
 echo "Compiling necessary libraries..."

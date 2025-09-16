@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.4.1'
+__version__ = '0.4.2'
 __author__ = 'Bass Lab'
 
 import os

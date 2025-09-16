@@ -8,7 +8,7 @@ from setuptools.command.develop import develop
 from setuptools.command.build_py import build_py
 
 # Version information
-__version__ = '0.4.2'
+__version__ = '0.4.3'
 
 def compile_einverted_now():
     """Compile einverted immediately when setup.py runs"""
