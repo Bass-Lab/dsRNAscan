@@ -66,8 +66,8 @@ dsrna-browse results_directory/ --editing-file editing_sites.bed
 
 If you use dsRNAscan, please cite:
 
-> Comprehensive mapping of human dsRNAome reveals conservation, neuronal enrichment, and intermolecular interactions
-> https://doi.org/10.1101/2025.01.24.634786
+> dsRNAscan maps human dsRNAome, revealing conservation, intermolecular dsRNA, and correlates of ADAR dependency.
+> *Molecular Cell* (2026). https://doi.org/10.1016/j.molcel.2026.08.001
 
 ## License
 
