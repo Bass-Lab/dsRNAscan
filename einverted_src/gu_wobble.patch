@@ -1,0 +1,29 @@
+--- a/emboss/einverted.c
++++ b/emboss/einverted.c
+@@ -200,14 +200,20 @@
+ 	    case 1:
+ 		revmatch[2][j] = match;
+ 		break;			/* C */
+-	    case 2:
++
++        case 2:
+ 		revmatch[1][j] = match;
+-		break;			/* G */
+-	    case 3:
+-		revmatch[0][j] = match;
+-		break;			/* T */
++        /* Allowing for GU matches "2 to 3" */
++        revmatch[3][j] = match;
++        break;			/* G */
++
++        case 3:
++		revmatch[0][j] = match;
++        /* Allowing for GU matches "2 to 3" */
++        revmatch[2][j] = match;
++        break;			/* T */
+ 	    }
+-	
++
+ 	back     = ajIntNewRes(maxsave);
+ 	localMax = ajIntNewRes(maxsave);
+ 	matrix   = ajInt2dNewResRes2(maxsave, maxsave);
