@@ -64,6 +64,7 @@ Repository = "https://github.com/Bass-Lab/dsRNAscan"
 manifest-path = "dsrnascan-core/Cargo.toml"
 module-name = "dsrnascan._core"
 features = ["python"]
+include = [{ path = "LICENSE", format = "sdist" }]
 exclude = [
     "dsrnascan/dsRNAscan_optimized.py",
     "dsrnascan/tools/platform_binaries/einverted_linux_i386",
