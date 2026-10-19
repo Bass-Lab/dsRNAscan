@@ -50,3 +50,6 @@ emboss_install/
 .pypirc
 detailed_parallel_check.py
 setup_embedded_compile.py
+
+# separate analysis tool, kept locally only
+overlap_analyzer/

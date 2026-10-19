@@ -69,10 +69,6 @@ If you use dsRNAscan, please cite:
 > Comprehensive mapping of human dsRNAome reveals conservation, neuronal enrichment, and intermolecular interactions
 > https://doi.org/10.1101/2025.01.24.634786
 
-## Additional Tools
-
-[overlap_analyzer](overlap_analyzer/README.md): enrichment of genomic features overlapping dsRNA predictions (in the repository, not the PyPI package).
-
 ## License
 
 GNU General Public License v3.0 - see [LICENSE](LICENSE). **Issues:** [GitHub Issues](https://github.com/Bass-Lab/dsRNAscan/issues)
