@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dsrnascan"
-version = "0.6.0"
+version = "0.7.0"
 description = "A tool for genome-wide prediction of double-stranded RNA structures"
 readme = "README.md"
 authors = [
@@ -31,15 +31,11 @@ dependencies = [
     "biopython>=1.78",
     "numpy>=1.19",
     "pandas>=1.1",
-    "ViennaRNA>=2.4",
-    "psutil>=5.8",
-    "tqdm>=4.0",
     "ydf>=0.9.0",
     "scikit-learn>=1.0",
 ]
 
 [project.optional-dependencies]
-mpi = ["mpi4py>=3.0", "parasail>=1.2"]
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
@@ -51,7 +47,6 @@ dev = [
 [project.scripts]
 dsrnascan = "dsrnascan:main"
 dsrna-browse = "dsrnascan.browse_results:main"
-# dsrnascan-mpi = "dsrnascan_mpi:main"  # Uncomment when module is renamed
 
 [project.urls]
 Homepage = "https://github.com/Bass-Lab/dsRNAscan"
@@ -67,7 +62,7 @@ features = ["python"]
 include = [{ path = "LICENSE", format = "sdist" }]
 exclude = [
     "dsrnascan/dsRNAscan_optimized.py",
-    "dsrnascan/tools/platform_binaries/einverted_linux_i386",
+    "dsrnascan/tools/**",
     "dsrnascan/**/__pycache__/**",
 ]
 

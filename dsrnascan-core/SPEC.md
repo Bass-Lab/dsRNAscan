@@ -22,7 +22,7 @@ How:
 - **The sweep records each row's running maximum** (`scan::RowSteps`), so the row's best within
   any window is a lookup.
 - **einverted's report loop is replayed per window on those rows** (`einverted.rs`, ported from
-  `einverted_src/dsrnascan_einverted.c`). One edge case is matched: einverted never reports the
+  EMBOSS einverted with dsRNAscan's G-U patch). One edge case is matched: einverted never reports the
   adjacent-base cell (column 0). It reports the next cell and keeps that match in the score
   (`COL0_META`).
 - **The 0.5.x pipeline then runs on the union:** match pre-filter, fold (`duplex.rs`),

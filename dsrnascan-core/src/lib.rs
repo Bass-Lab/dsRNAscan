@@ -10,6 +10,7 @@
 
 pub mod duplex;
 pub mod einverted;
+pub mod energy;
 pub mod scan;
 #[cfg(feature = "python")]
 mod python;
@@ -71,6 +72,8 @@ pub struct Params {
     /// complemented minus) or from its last nt (reverse-complement minus), so a region scan gives
     /// that run's hits. `None` = windows start at the scanned sequence's own ends (0.5.x).
     pub grid: Option<(usize, usize)>,
+    /// Folding temperature in Celsius (energies rescaled as ViennaRNA does; 37 = Turner 2004 as published).
+    pub temperature: f64,
 }
 
 impl Default for Params {
@@ -97,6 +100,7 @@ impl Default for Params {
             windows: Vec::new(),
             minus_revcomp: false,
             grid: None,
+            temperature: 37.0,
         }
     }
 }
@@ -293,11 +297,12 @@ fn fold(enc: &[u8], h: &Hit, minus: bool, p: &Params) -> Option<Dsrna> {
         return None; // only reachable when the cutoff is applied after selection
     }
     let (a, b) = (arm(enc, h.i_start, h.i_end, minus), arm(enc, h.j_start, h.j_end, minus));
+    let en = energy::energy(p.temperature);
     let d = match p.band_margin {
-        None => duplex::duplexfold(&a, &b)?,
+        None => duplex::duplexfold(en, &a, &b)?,
         Some(m) => {
             let (lo, hi) = duplex::path_band(a.len(), b.len(), h.gaps as usize, m);
-            duplex::duplexfold_band(&a, &b, lo, hi)?
+            duplex::duplexfold_band(en, &a, &b, lo, hi)?
         }
     };
     let (s1, s2) = d.structure.split_once('&').unwrap();
@@ -329,9 +334,10 @@ fn fold(enc: &[u8], h: &Hit, minus: bool, p: &Params) -> Option<Dsrna> {
 }
 
 /// Order-preserving parallel map on the global rayon pool. Results do not depend on the number of
-/// threads.
+/// threads. Every item is its own task, so a run of slow items (huge gappy folds) spreads over the
+/// pool instead of pinning one thread.
 pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
-    items.par_iter().map(f).collect()
+    items.par_iter().with_max_len(1).map(f).collect()
 }
 
 /// Size the global thread pool once, before any work (0 = all cores).

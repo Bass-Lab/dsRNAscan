@@ -995,8 +995,8 @@ async function loadResults() {
         }
         const stabVal = r.stability_model_score != null ? r.stability_model_score.toFixed(3) : '-';
         const probVal = r.probing_model_score != null ? r.probing_model_score.toFixed(3) : '-';
-        const stabStyle = scoreColor(r.stability_model_score, 0.247);
-        const probStyle = scoreColor(r.probing_model_score, 0.032);
+        const stabStyle = scoreColor(r.stability_model_score, 0.5526);
+        const probStyle = scoreColor(r.probing_model_score, 0.440);
         tr.innerHTML = `<td>${r.chromosome}:${r.i_start.toLocaleString()}-${r.j_end.toLocaleString()}</td>
             <td>${r.strand}</td>
             <td>${r.score}</td><td>${r.dG.toFixed(1)}</td><td>${r.base_pairs}</td>
@@ -1040,8 +1040,8 @@ function showInfo(d) {
         }
     }
     html += '<div style="margin-top:6px;font-size:10px;color:#888;line-height:1.4;">'
-        + 'Stability model predicts ADAR editing substrate likelihood from structural features (threshold: 0.247). '
-        + 'Probing model predicts in vivo structure formation from RNA probing data (threshold: 0.032). '
+        + 'Stability model predicts ADAR editing substrate likelihood from structural features (threshold: 0.553). '
+        + 'Probing model predicts in vivo structure formation from RNA probing data (0-1 scale, threshold: 0.440). '
         + 'Thresholds derived from human editing sites and may not apply to other organisms.</div>';
     if (d.editing_sites && d.editing_sites.length > 0) html += `<div><span class="metric-label" style="color:#27AE60">Editing Sites:</span> <span class="metric-value">${d.editing_sites.length}</span></div>`;
     document.getElementById('metrics').innerHTML = html;
@@ -1223,9 +1223,10 @@ def main():
         print(f"Error: Directory {args.output_dir} does not exist")
         sys.exit(1)
 
-    results_files = list(output_path.glob('*_merged_results.txt'))
+    # *.dsrnas.txt since 0.7.0; *_merged_results.txt from earlier versions
+    results_files = list(output_path.glob('*.dsrnas.txt')) + list(output_path.glob('*_merged_results.txt'))
     if not results_files:
-        print(f"Error: No dsRNAscan results files (*_merged_results.txt) found in {args.output_dir}")
+        print(f"Error: No dsRNAscan results files (*.dsrnas.txt) found in {args.output_dir}")
         sys.exit(1)
 
     # Load all results into a single DataFrame

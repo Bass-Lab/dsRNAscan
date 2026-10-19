@@ -24,9 +24,15 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 # Stability: pure structural RF (1000 trees, depth 5, no genic feature)
 #   Test set (chr1, chr19, chrX): AUC=0.875, Sens=94.7%, Spec=72.3%
 #   Full dataset: AUC=0.888, Sens=94.8%, Spec=74.9%
-# Youden thresholds optimized on human editing/probing data
-STABILITY_YOUDEN_THRESHOLD = 0.2471
+#   (0.2471 belonged to the published model, which also used a genic feature)
+STABILITY_YOUDEN_THRESHOLD = 0.5526
+# Probing: the model predicts a power-weighted advantage (about -0.07 to 0.16). It is reported on 0-1 by
+# min-max scaling over the 5.13M human dsRNAs, as on the dsRNA browser; the Youden cutoff against
+# editing, raw 0.0315, is 0.440 on that scale (the published resource's structure_probing_high_conf).
+PROBING_RAW_MIN = -0.06649859532060612
+PROBING_RAW_MAX = 0.1561966513188369
 PROBING_YOUDEN_THRESHOLD_RAW = 0.0315
+PROBING_YOUDEN_THRESHOLD = (PROBING_YOUDEN_THRESHOLD_RAW - PROBING_RAW_MIN) / (PROBING_RAW_MAX - PROBING_RAW_MIN)
 
 
 def _check_ydf():
@@ -92,10 +98,11 @@ def derive_ml_features(df):
     # loop_length = distance between the two arms
     loop_length = (df['j_start'] - df['i_end']).abs().astype(float)
 
-    # length = length of the shorter arm
+    # length = length of the longer arm (end - start), the training data's `length`: it reproduces the
+    # published probing scores (99% exact on chr19; the shorter arm gives 84%)
     arm_i = (df['i_end'] - df['i_start']).abs().astype(float)
     arm_j = (df['j_end'] - df['j_start']).abs().astype(float)
-    length = pd.concat([arm_i, arm_j], axis=1).min(axis=1)
+    length = pd.concat([arm_i, arm_j], axis=1).max(axis=1)
 
     return pd.DataFrame({
         'bp_count': bp_count,
@@ -106,7 +113,7 @@ def derive_ml_features(df):
     })
 
 
-def score_stability(features_df):
+def score_stability(features_df, threads=None):
     """Score predictions with the stability model (YDF RandomForest).
 
     Parameters
@@ -126,12 +133,19 @@ def score_stability(features_df):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Stability model not found at {model_path}")
 
-    model = ydf.load_model(model_path)
-    scores = model.predict(features_df)
+    previous = ydf.verbose(0)  # no "Loading model" lines on the console
+    try:
+        model = ydf.load_model(model_path)
+        try:
+            scores = model.predict(features_df, num_threads=threads)
+        except TypeError:  # older ydf
+            scores = model.predict(features_df)
+    finally:
+        ydf.verbose(previous)
     return scores
 
 
-def score_probing(features_df):
+def score_probing(features_df, threads=None):
     """Score predictions with the probing model (sklearn RandomForest).
 
     Parameters
@@ -164,11 +178,12 @@ def score_probing(features_df):
     # Scaler expects features in order: length, percent_paired, loop_length, bp_count, er_energy
     probing_features = features_df[['length', 'percent_paired', 'loop_length', 'bp_count', 'er_energy']].copy()
     X_scaled = scaler.transform(probing_features)
+    model.n_jobs = threads or -1  # the saved model uses every core on the machine
     scores = model.predict(X_scaled)
     return scores
 
 
-def score_results(results_df, models=None):
+def score_results(results_df, models=None, threads=None):
     """Score dsRNAscan results with available ML models.
 
     Parameters
@@ -207,11 +222,12 @@ def score_results(results_df, models=None):
             logger.warning("ydf not installed, skipping stability model")
         else:
             try:
-                scores = score_stability(features_df)
+                scores = score_stability(features_df, threads)
                 results_df = results_df.copy()
                 results_df['stability_model_score'] = np.round(scores, 3)
-                n_high = (scores >= STABILITY_YOUDEN_THRESHOLD).sum()
-                logger.info(f"Stability model: {n_high}/{n} predictions above threshold ({n_high/n*100:.1f}%)")
+                results_df['likely_edited'] = np.where(scores >= STABILITY_YOUDEN_THRESHOLD, 'Yes', 'No')
+                n_high = (results_df['likely_edited'] == 'Yes').sum()
+                logger.info(f"  likely_edited (stability model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
             except Exception as e:
                 logger.error(f"Stability model scoring failed: {e}")
 
@@ -220,33 +236,27 @@ def score_results(results_df, models=None):
             logger.warning("scikit-learn not installed, skipping probing model")
         else:
             try:
-                scores = score_probing(features_df)
+                raw = score_probing(features_df, threads)
+                scores = np.clip((raw - PROBING_RAW_MIN) / (PROBING_RAW_MAX - PROBING_RAW_MIN), 0, 1)
                 if 'stability_model_score' not in results_df.columns:
                     results_df = results_df.copy()
                 results_df['probing_model_score'] = np.round(scores, 3)
-                n_high = (scores >= PROBING_YOUDEN_THRESHOLD_RAW).sum()
-                logger.info(f"Probing model: {n_high}/{n} predictions above threshold ({n_high/n*100:.1f}%)")
+                results_df['likely_forms'] = np.where(raw >= PROBING_YOUDEN_THRESHOLD_RAW, 'Yes', 'No')
+                n_high = (results_df['likely_forms'] == 'Yes').sum()
+                logger.info(f"  likely_forms (probing model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
             except Exception as e:
                 logger.error(f"Probing model scoring failed: {e}")
-
-    # Add categorical columns based on thresholds
-    if 'stability_model_score' in results_df.columns:
-        results_df['likely_edited'] = np.where(
-            results_df['stability_model_score'] >= STABILITY_YOUDEN_THRESHOLD, 'Yes', 'No')
-    if 'probing_model_score' in results_df.columns:
-        results_df['likely_forms'] = np.where(
-            results_df['probing_model_score'] >= PROBING_YOUDEN_THRESHOLD_RAW, 'Yes', 'No')
 
     return results_df
 
 
 def score_results_file(input_path, output_path=None):
-    """Score an existing dsRNAscan merged_results.txt file.
+    """Score an existing dsRNAscan results file (*.dsrnas.txt).
 
     Parameters
     ----------
     input_path : str
-        Path to merged_results.txt file.
+        Path to a *.dsrnas.txt file.
     output_path : str, optional
         Path to write scored results. Default: overwrite input.
 

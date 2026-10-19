@@ -16,12 +16,13 @@ type Row = (
 /// Coordinates are 1-based on the full reference: `offset` is where `sequence` starts in it.
 /// `lengths`: each record's full chromosome length, so `minus_revcomp` region scans put their
 /// windows where a whole-chromosome run would (optional; without it windows start at the ends).
+/// `temperature`: folding temperature in Celsius.
 /// Returns {column: list} with dsRNAscan's merged_results columns (pandas.DataFrame-ready).
 #[pyfunction]
 #[pyo3(signature = (records, strands="both", threads=0, window=10000, max_span=10000, step=500,
                     threshold=75, match_score=3, mismatch=-4, gap=12, min_match_perc=70.0,
                     min_percent_paired=70.0, min_bp=25, eliminate_nested=true, banded=false,
-                    windows=Vec::new(), minus_revcomp=false, lengths=Vec::new()))]
+                    windows=Vec::new(), minus_revcomp=false, lengths=Vec::new(), temperature=37.0))]
 #[allow(clippy::too_many_arguments)]
 fn scan<'py>(
     py: Python<'py>,
@@ -43,7 +44,11 @@ fn scan<'py>(
     windows: Vec<usize>,
     minus_revcomp: bool,
     lengths: Vec<usize>,
+    temperature: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
+    if !(0.0..=100.0).contains(&temperature) {
+        return Err(pyo3::exceptions::PyValueError::new_err("temperature must be between 0 and 100 C"));
+    }
     let strands: Vec<char> = match strands {
         "both" => vec!['+', '-'],
         "plus" => vec!['+'],
@@ -65,6 +70,7 @@ fn scan<'py>(
         window,
         windows,
         minus_revcomp,
+        temperature,
         threads: if threads > 0 { threads } else { Params::default().threads },
         ..Params::default()
     };

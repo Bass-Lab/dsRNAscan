@@ -5,8 +5,9 @@
 //! those lie in the same window. So the windows differ only in einverted's *reporting*, which
 //! reads one number per row: the row's best cell among partners inside the window. The sweep
 //! records each row's running maximum (`scan::RowSteps`); here einverted's report loop is replayed
-//! per window on those rows, ported from einverted_src/dsrnascan_einverted.c (main loop, lines
-//! ~262-490, and einverted_report's window-edge check).
+//! per window on those rows, ported from EMBOSS einverted (EMBOSS 6.6.0 einverted.c with
+//! dsRNAscan's G-U patch; Rice et al. 2000, Trends Genet 16:276): its main loop and
+//! einverted_report's window-edge check.
 
 use crate::scan::{self, columns, unpack, Candidate, RowSteps};
 use crate::{blocks, par_map, Hit, Params};

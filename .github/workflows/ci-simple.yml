@@ -24,22 +24,21 @@ jobs:
     - name: Install from source (builds the compiled engine with Rust)
       run: pip install .
 
-    - name: Compiled engine and legacy einverted pipeline agree
+    - name: Results match the expected dsRNAs
       run: |
         dsrnascan --version
-        FA=tests/data/chr19_1000001-1100000.fa
-        dsrnascan $FA --no-ml -c 2 --output-dir out_core
-        dsrnascan $FA --no-ml -c 2 --legacy-einverted --output-dir out_legacy
+        dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --output-dir out
         python - <<'EOF'
         import glob, pandas as pd
-        k = ['Strand', 'i_start', 'i_end', 'j_start', 'j_end']
-        core, legacy = (pd.read_csv(glob.glob(f'{d}/*_merged_results.txt')[0], sep='\t') for d in ('out_core', 'out_legacy'))
-        a, b = set(map(tuple, core[k].to_numpy())), set(map(tuple, legacy[k].to_numpy()))
-        print(f'core {len(a)} dsRNAs, legacy {len(b)} dsRNAs, identical: {a == b}')
-        assert len(a) > 0 and a == b
+        cols = ['Strand', 'i_start', 'i_end', 'j_start', 'j_end', 'dG(kcal/mol)', 'percent_paired', 'structure']
+        got = pd.read_csv(glob.glob('out/*.dsrnas.txt')[0], sep='\t')[cols]
+        exp = pd.read_csv('tests/data/chr19_1000001-1100000.expected.tsv', sep='\t')
+        a, b = set(map(tuple, got.astype(str).to_numpy())), set(map(tuple, exp.astype(str).to_numpy()))
+        print(f'{len(a)} dsRNAs, expected {len(b)}, identical: {a == b}')
+        assert a == b
         EOF
 
-    - name: --v1 runs
+    - name: ML scoring runs
       run: |
-        dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --v1 --output-dir out_v1
-        test "$(tail -n +2 out_v1/*_merged_results.txt | wc -l)" -gt 0
+        dsrnascan tests/data/chr19_1000001-1100000.fa -c 2 --output-dir out_ml
+        grep -q likely_edited out_ml/*.dsrnas.txt

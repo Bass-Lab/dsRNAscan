@@ -2,7 +2,7 @@
 
 `turner2004.json` (NNDB tables, kcal/mol; layout in `meta.layout`), `duplex_energy.py` (`energy(s1, s2, structure)`),
 `validate.py` (writes `validation_report.txt`, `validation_results.tsv`), `build_turner2004.py`, `nndb_raw/` + `SOURCES.md`.
-Evaluation only, no folding DP. ViennaRNA source was read for conventions; no code or parameter file was copied.
+Evaluation only, no folding DP. The 37 C free energies are from NNDB; the enthalpies used for other temperatures are from ViennaRNA (see Temperature).
 
 ## What `RNA.duplexfold`'s energy contains  (V = tested, S = read in duplex.c, consistent with data)
 - E = init + two helix-end terms + stack/bulge/interior loops between consecutive pairs (V).
@@ -14,7 +14,7 @@ Evaluation only, no folding DP. ViennaRNA source was read for conventions; no co
 - Parameters are the 0.1-rounded NNDB values: stacks, init 4.1, AU/GU end 0.5. 1-nt bulge = 3.8 + stack (no end penalty);
   larger bulge = init + 0.5 per AU/GU closing pair; interior loop: 1x1/1x2/2x2 tables, else init + min(3.0, 0.6|n1-n2|) +
   first mismatches (none for 1xn) + 0.7 per AU/GU closing pair; <=30 unpaired per loop (S); lonely pairs allowed.
-- N is scored as the worst of A/C/G/U for its term. 37 C only. `dangles` 1/2/3 give identical energies; 0 differs (not modelled).
+- N is scored as the worst of A/C/G/U for its term (at 37 C; see Temperature for other temperatures). `dangles` 1/2/3 give identical energies; 0 differs (not modelled).
 
 ## Profiles
 `duplexfold` (default) reproduces the above. `nndb` follows the NNDB text: 2-decimal stacks, 4.09, 0.45, special C bulge,
@@ -50,3 +50,12 @@ The self-complementary symmetry term (+0.43) is available as `symmetry=True`; du
 Structures are not reproduced: duplexfold picks the end pair by strict `<` (i ascending, j descending) and backtracks to the first matching
 predecessor (k descending, l ascending), so ties extend the helix (S, untested). `percent_paired` and helix length depend on this.
 Use integer centi-kcal in Rust. Loops >30 nt never occur in duplexfold output (log extrapolation checked to 0.01 only).
+
+## Temperature (`energy.rs`)
+Enthalpies come from ViennaRNA 2.7.0's Turner 2004 set (`RNA.params_save`), mapped onto our layout by `vienna_tables.py`;
+the mapping is checked by requiring ViennaRNA's 37 C values to reproduce the NNDB-derived tables. Rescaling follows
+ViennaRNA: G(T) = trunc(H - (H - G37) (T + 273.15) / 310.15); dangles and terminal mismatches capped at 0; asymmetry cap
+(3.0) not rescaled; N entries = max over A/C/G/U, taken separately for G37 and H. Interior mismatch tables carry the AU/GU
+closure penalty per entry, as ViennaRNA's do, so each entry is rescaled once.
+Parity: 2,912 pairs (1,412 dsRNAscan arm pairs from ce11 chrI and chr19, 1,500 synthetic with mismatches, indels, G-U
+and N): energy, structure, i and j identical to `RNA.duplexfold` at 0, 20, 30, 37, 42, 60 and 80 C.

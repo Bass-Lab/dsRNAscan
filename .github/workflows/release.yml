@@ -65,31 +65,10 @@ jobs:
         with:
           name: ${{ matrix.wheel }}
           path: dist
-      - name: Full package (Linux, macOS)
-        if: runner.os != 'Windows'
+      - name: Install and scan
         shell: bash
         run: |
           pip install dist/*.whl
           dsrnascan --version
-          dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --output-dir out_default
-          dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --v1 --output-dir out_v1
-          test "$(tail -n +2 out_default/*_merged_results.txt | wc -l)" -gt 0
-          test "$(tail -n +2 out_v1/*_merged_results.txt | wc -l)" -gt 0
-      - name: Compiled engine only (Windows; ViennaRNA has no Windows wheels)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          pip install --no-deps dist/*.whl
-          python -c "
-          # load the extension file directly: the package __init__ needs ViennaRNA, absent here
-          import glob, importlib.machinery, importlib.util, os, sysconfig
-          path = glob.glob(os.path.join(sysconfig.get_paths()['platlib'], 'dsrnascan', '_core*.pyd'))[0]
-          loader = importlib.machinery.ExtensionFileLoader('dsrnascan._core', path)
-          spec = importlib.util.spec_from_file_location('dsrnascan._core', path, loader=loader)
-          _core = importlib.util.module_from_spec(spec); loader.exec_module(_core)
-          seq = ''.join(l.strip() for l in open('tests/data/chr19_1000001-1100000.fa') if not l.startswith('>'))
-          cols = _core.scan([('t', 0, seq.encode())])
-          n = len(cols['Chromosome'])
-          print('engine', _core.__version__, 'dsRNAs', n)
-          assert n > 0
-          "
+          dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --output-dir out
+          test "$(tail -n +2 out/*.dsrnas.txt | wc -l)" -gt 0

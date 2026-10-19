@@ -1,12 +1,11 @@
 //! RNA duplex minimum free energy: a port of ViennaRNA's `duplexfold` (src/ViennaRNA/duplex.c,
-//! ViennaRNA 2.7.0; Lorenz et al. 2011, Algorithms Mol Biol 6:26) with Turner 2004 parameters
-//! (`turner2004.rs`). Same recursion, integer arithmetic and tie rules, so energy, structure and
+//! ViennaRNA 2.7.0; Lorenz et al. 2011, Algorithms Mol Biol 6:26) with Turner 2004 parameters at any
+//! temperature (`energy.rs`). Same recursion, integer arithmetic and tie rules, so energy, structure and
 //! trim positions match `RNA.duplexfold`. Strand 1 pairs 5'->3' against strand 2 3'->5'; no
 //! intramolecular pairs; loops of up to 30 unpaired nucleotides.
 
-use crate::turner2004 as t;
+use crate::energy::{Energy, MAXLOOP};
 
-const MAXLOOP: usize = 30;
 const INF: i32 = 10_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,87 +53,62 @@ fn is_au_gu(p: usize) -> bool {
     matches!(p, 0 | 3 | 4 | 5)
 }
 
-/// ViennaRNA scores an unknown base (N) as the least favourable of A/C/G/U for the term it sits in.
-#[inline]
-fn worst<const K: usize>(bases: [u8; K], f: impl Fn([usize; K]) -> i32) -> i32 {
-    if bases.iter().all(|&b| b < 4) {
-        return f(bases.map(|b| b as usize));
-    }
-    worst_with_n(bases, f)
-}
-
-#[cold]
-fn worst_with_n<const K: usize>(bases: [u8; K], f: impl Fn([usize; K]) -> i32) -> i32 {
-    let ns: Vec<usize> = (0..K).filter(|&k| bases[k] > 3).collect();
-    let mut idx = bases.map(|b| (b as usize).min(3));
-    let mut worst = i32::MIN;
-    for code in 0..4usize.pow(ns.len() as u32) {
-        let mut c = code;
-        for &k in &ns {
-            idx[k] = c % 4;
-            c /= 4;
-        }
-        worst = worst.max(f(idx));
-    }
-    worst
-}
-
 /// Helix end: pair (top, bottom) drawn 5'->3' on top; x = nt 3' of top, y = nt 5' of bottom.
-fn end_term(top: u8, bot: u8, x: Option<u8>, y: Option<u8>) -> i32 {
+fn end_term(e: &Energy, top: u8, bot: u8, x: Option<u8>, y: Option<u8>) -> i32 {
     let p = pair_type(top, bot).expect("end of a duplex must be a pair");
-    let au = if is_au_gu(p) { t::TERM_AU } else { 0 };
+    let au = if is_au_gu(p) { e.term_au } else { 0 };
     au + match (x, y) {
-        (Some(x), Some(y)) => worst([x, y], |[x, y]| t::TMM[p][x][y]),
-        (Some(x), None) => worst([x], |[x]| t::D3[p][x]),
-        (None, Some(y)) => worst([y], |[y]| t::D5[p][y]),
+        (Some(x), Some(y)) => e.tmm[p][x as usize][y as usize],
+        (Some(x), None) => e.d3[p][x as usize],
+        (None, Some(y)) => e.d5[p][y as usize],
         (None, None) => 0,
     }
 }
 
 /// End at strand 1's 5' side (the duplex's first pair), drawn with strand 2 on top.
-fn first_end(s1: &[u8], s2: &[u8], i: usize, j: usize) -> i32 {
-    end_term(s2[j], s1[i], s2.get(j + 1).copied(), i.checked_sub(1).map(|k| s1[k]))
+fn first_end(e: &Energy, s1: &[u8], s2: &[u8], i: usize, j: usize) -> i32 {
+    end_term(e, s2[j], s1[i], s2.get(j + 1).copied(), i.checked_sub(1).map(|k| s1[k]))
 }
 
 /// End at strand 1's 3' side (the duplex's last pair).
-fn last_end(s1: &[u8], s2: &[u8], i: usize, j: usize) -> i32 {
-    end_term(s1[i], s2[j], s1.get(i + 1).copied(), j.checked_sub(1).map(|k| s2[k]))
+fn last_end(e: &Energy, s1: &[u8], s2: &[u8], i: usize, j: usize) -> i32 {
+    end_term(e, s1[i], s2[j], s1.get(i + 1).copied(), j.checked_sub(1).map(|k| s2[k]))
 }
 
 /// Energy of the loop closed by outer pair (k, l) and inner pair (i, j), k < i, l > j.
-fn loop_energy(s1: &[u8], s2: &[u8], k: usize, l: usize, i: usize, j: usize) -> i32 {
+fn loop_energy(e: &Energy, s1: &[u8], s2: &[u8], k: usize, l: usize, i: usize, j: usize) -> i32 {
     let (n1, n2) = (i - k - 1, l - j - 1);
     let outer = pair_type(s1[k], s2[l]).unwrap();
     let inner = pair_type(s1[i], s2[j]).unwrap();
     if n1 == 0 && n2 == 0 {
-        return t::STACK[outer][inner];
+        return e.stack[outer][inner];
     }
     if n1 == 0 || n2 == 0 {
         let n = n1 + n2;
         if n == 1 {
-            return t::BULGE[1] + t::STACK[outer][inner]; // the helix stacks across a 1-nt bulge
+            return e.bulge[1] + e.stack[outer][inner]; // the helix stacks across a 1-nt bulge
         }
-        let au = |p| if is_au_gu(p) { t::TERM_AU } else { 0 };
-        return t::BULGE[n] + au(outer) + au(inner);
+        let au = |p| if is_au_gu(p) { e.term_au } else { 0 };
+        return e.bulge[n] + au(outer) + au(inner);
     }
-    let (x1, y1) = (s1[k + 1], s2[l - 1]); // loop nt next to the outer pair (strand 1, strand 2)
-    let (x2, y2) = (s2[j + 1], s1[i - 1]); // next to the inner pair, read from the far side
+    let (x1, y1) = (s1[k + 1] as usize, s2[l - 1] as usize); // loop nt next to the outer pair (strand 1, strand 2)
+    let (x2, y2) = (s2[j + 1] as usize, s1[i - 1] as usize); // next to the inner pair, read from the far side
     match (n1, n2) {
-        (1, 1) => worst([x1, y1], |[x, y]| t::INT11[outer][inner][x][y]),
-        (1, 2) => worst([s2[l - 2], x1, y1], |[f, x, y]| t::INT21[outer][inner][f][x][y]),
-        (2, 1) => worst([s1[i - 2], x2, y2], |[f, x, y]| t::INT21[REV[inner]][REV[outer]][f][x][y]),
-        (2, 2) => worst([x1, y1, y2, x2], |[a, b, c, d]| t::INT22[outer][inner][4 * a + b][4 * c + d]),
+        (1, 1) => e.int11[outer][inner][x1][y1],
+        (1, 2) => e.int21[outer][inner][s2[l - 2] as usize][x1][y1],
+        (2, 1) => e.int21[REV[inner]][REV[outer]][s1[i - 2] as usize][x2][y2],
+        (2, 2) => e.int22[outer][inner][5 * x1 + y1][5 * y2 + x2],
         _ => {
-            let asym = (t::ASYM_PER_NT * (n1 as i32 - n2 as i32).abs()).min(t::ASYM_CAP);
+            // first mismatches at both closing pairs (the inner one read from the far side); the
+            // tables include the AU/GU closure penalty, as ViennaRNA's do
             let mm = if n1.min(n2) == 1 {
-                2 * t::MM_1XN
+                &e.mm1ni
             } else if (n1.min(n2), n1.max(n2)) == (2, 3) {
-                worst([x1, y1, x2, y2], |[a, b, c, d]| t::MM23[outer][a][b] + t::MM23[REV[inner]][c][d])
+                &e.mm23i
             } else {
-                worst([x1, y1, x2, y2], |[a, b, c, d]| t::MM_GENERIC[a][b] + t::MM_GENERIC[c][d])
+                &e.mmi
             };
-            let au = |p| if is_au_gu(p) { t::INT_AU } else { 0 };
-            t::INT_INIT[n1 + n2] + asym + mm + au(outer) + au(inner)
+            e.int_init[n1 + n2] + e.asym(n1, n2) + mm[outer][x1][y1] + mm[REV[inner]][x2][y2]
         }
     }
 }
@@ -179,50 +153,11 @@ impl Band {
     }
 }
 
-/// Lowest energy any loop with n1 x n2 unpaired nt can have, over all sequence contexts.
-/// Lets the DP skip loops that cannot beat the current best without changing its result.
-fn loop_floor() -> &'static [[i32; MAXLOOP + 1]; MAXLOOP + 1] {
-    static FLOOR: std::sync::OnceLock<[[i32; MAXLOOP + 1]; MAXLOOP + 1]> = std::sync::OnceLock::new();
-    FLOOR.get_or_init(|| {
-        let min_of = |it: &mut dyn Iterator<Item = i32>| it.min().unwrap();
-        let stack = min_of(&mut t::STACK.iter().flatten().copied());
-        let int11 = min_of(&mut t::INT11.iter().flatten().flatten().flatten().copied());
-        let int21 = min_of(&mut t::INT21.iter().flatten().flatten().flatten().flatten().copied());
-        let int22 = min_of(&mut t::INT22.iter().flatten().flatten().flatten().copied());
-        let mm23 = min_of(&mut t::MM23.iter().flatten().flatten().copied());
-        let mmg = min_of(&mut t::MM_GENERIC.iter().flatten().copied());
-        let mut f = [[INF; MAXLOOP + 1]; MAXLOOP + 1];
-        for n1 in 0..=MAXLOOP {
-            for n2 in 0..=MAXLOOP - n1 {
-                f[n1][n2] = match (n1, n2) {
-                    (0, 0) => stack,
-                    (0, n) | (n, 0) if n == 1 => t::BULGE[1] + stack,
-                    (0, n) | (n, 0) => t::BULGE[n],
-                    (1, 1) => int11,
-                    (1, 2) | (2, 1) => int21,
-                    (2, 2) => int22,
-                    _ => {
-                        let asym = (t::ASYM_PER_NT * (n1 as i32 - n2 as i32).abs()).min(t::ASYM_CAP);
-                        let mm = if n1.min(n2) == 1 {
-                            2 * t::MM_1XN
-                        } else if (n1.min(n2), n1.max(n2)) == (2, 3) {
-                            2 * mm23
-                        } else {
-                            2 * mmg
-                        };
-                        t::INT_INIT[n1 + n2] + asym + mm.min(0)
-                    }
-                };
-            }
-        }
-        f
-    })
-}
-
 /// Visit every pair (k, l) that can close a loop of <= MAXLOOP nt onto (i, j), in duplex.c's order
 /// (k = i-1 downwards, then l = j+1 upwards), with the energy of reaching (i, j) through it.
 /// Stops early when `visit` returns true.
 fn for_each_loop(
+    e: &Energy,
     s1: &[u8],
     s2: &[u8],
     c: &Band,
@@ -237,7 +172,7 @@ fn for_each_loop(
                 break;
             }
             let ckl = c.get(k, l);
-            if ckl < INF && visit(k, l, ckl + loop_energy(s1, s2, k, l, i, j)) {
+            if ckl < INF && visit(k, l, ckl + loop_energy(e, s1, s2, k, l, i, j)) {
                 return;
             }
         }
@@ -245,8 +180,8 @@ fn for_each_loop(
 }
 
 /// Minimum free energy duplex of strand 1 (5'->3') with strand 2 (5'->3'), as `RNA.duplexfold`.
-pub fn duplexfold(strand1: &[u8], strand2: &[u8]) -> Option<Duplex> {
-    duplexfold_band(strand1, strand2, 0, (strand1.len() + strand2.len()).saturating_sub(2))
+pub fn duplexfold(en: &Energy, strand1: &[u8], strand2: &[u8]) -> Option<Duplex> {
+    duplexfold_band(en, strand1, strand2, 0, (strand1.len() + strand2.len()).saturating_sub(2))
 }
 
 /// The band that contains a search hit's alignment path, widened by `margin`. `gaps` is the hit's
@@ -259,7 +194,7 @@ pub fn path_band(len1: usize, len2: usize, gaps: usize, margin: usize) -> (usize
 
 /// `duplexfold` over the band `lo <= i + j <= hi` only (0-based i on strand 1, j on strand 2).
 /// Identical to the full fold whenever the full fold's MFE duplex lies inside the band.
-pub fn duplexfold_band(strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> Option<Duplex> {
+pub fn duplexfold_band(en: &Energy, strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> Option<Duplex> {
     let s1: Vec<u8> = strand1.iter().map(|&c| base(c)).collect();
     let s2: Vec<u8> = strand2.iter().map(|&c| base(c)).collect();
     let (n1, n2) = (s1.len(), s2.len());
@@ -274,10 +209,10 @@ pub fn duplexfold_band(strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> 
             if pair_type(s1[i], s2[j]).is_none() {
                 continue;
             }
-            let mut v = t::INIT + first_end(&s1, &s2, i, j);
+            let mut v = en.init + first_end(en, &s1, &s2, i, j);
             // Same minimum as visiting every loop, but a loop whose floor cannot beat the current
             // best is skipped before its energy is computed. Traceback below is unchanged.
-            let floor = loop_floor();
+            let floor = &en.floor;
             for k in (i.saturating_sub(MAXLOOP + 1)..i).rev() {
                 let n1l = i - k - 1;
                 // row k's band columns, resolved once: l runs over j+1.. within the loop-size limit
@@ -295,13 +230,13 @@ pub fn duplexfold_band(strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> 
                 }
                 for (x, (&ckl, &f)) in rs.iter().zip(fs).enumerate() {
                     if ckl < INF && ckl + f < v {
-                        v = v.min(ckl + loop_energy(&s1, &s2, k, lo + x, i, j));
+                        v = v.min(ckl + loop_energy(en, &s1, &s2, k, lo + x, i, j));
                     }
                 }
             }
             let s = c.slot(i, j).unwrap();
             c.c[s] = v;
-            let e = v + last_end(&s1, &s2, i, j);
+            let e = v + last_end(en, &s1, &s2, i, j);
             if e < emin {
                 emin = e;
                 imin = i;
@@ -325,7 +260,7 @@ pub fn duplexfold_band(strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> 
         longest = longest.max(run);
         let target = c.get(i, j);
         let mut next = None;
-        for_each_loop(&s1, &s2, &c, i, j, |k, l, e| {
+        for_each_loop(en, &s1, &s2, &c, i, j, |k, l, e| {
             if e == target {
                 next = Some((k, l));
             }
@@ -340,7 +275,7 @@ pub fn duplexfold_band(strand1: &[u8], strand2: &[u8], lo: usize, hi: usize) -> 
                 j = l;
             }
             None => {
-                debug_assert_eq!(target - first_end(&s1, &s2, i, j), t::INIT);
+                debug_assert_eq!(target - first_end(en, &s1, &s2, i, j), en.init);
                 break;
             }
         }

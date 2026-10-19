@@ -12,7 +12,7 @@ const USAGE: &str = "usage: dsrnascan-core <fasta> [options]
   windows:  -s/--step N (500)  --window N (max span)  --windows W1,W2,..
             --minus-revcomp (scan the minus strand on its reverse complement)
   filters:  --percent-paired F (70)  --min-bp N (25)
-  fold:     --banded (faster, ~99% identical)  --band-margin N (30)
+  fold:     --banded (faster, ~99% identical)  --band-margin N (30)  -t/--temperature C (37)
   presets:  --v1 (settings used for the human dsRNAome resource)
   region:   --only-seq NAME  --start N  --end N (1-based; output in full-sequence coordinates)
   other:    --strand plus|minus|both (both)  --threads N (all cores)  --block-size N (auto)
@@ -60,6 +60,12 @@ fn main() {
             "--windowless" => p.window_step = None,
             "--banded" => p.band_margin = Some(p.band_margin.unwrap_or(30)),
             "--band-margin" => p.band_margin = Some(num(val())),
+            "-t" | "--temperature" => {
+                p.temperature = num(val());
+                if !(0.0..=100.0).contains(&p.temperature) {
+                    die("--temperature must be between 0 and 100 C");
+                }
+            }
             "--no-select" => raw = true,
             "--only-seq" | "--only_seq" => only_seq = Some(val().clone()),
             "--start" => start = num(val()),

@@ -2,6 +2,23 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.0] - 2026-10-19
+
+- The settings used for the human dsRNAome resource (`--v1`) are now on by default: windows of 10000 and
+  3000, step 150, banded fold. Each flag changes only its own setting (`-w` gives one window of that size;
+  `--exact` for the exact fold), and the log lists what differs from the defaults.
+- Compiled engine only: the legacy einverted pipeline, the einverted binaries and the ViennaRNA dependency
+  are removed. `-t` (folding temperature) now runs in the engine, matching RNA.duplexfold exactly.
+- Shorter output names (`<input>.dsrnas.txt`) in `<input>_dsrnascan/`; settings go to `dsrnascan.log`.
+- Cleaner console with progress per sequence and a resource summary; faster on long runs.
+- `-c` defaults to the whole allocation in a SLURM job, otherwise 4.
+- Stability model cutoff fixed to 0.5526 (the bundled model's own Youden cutoff; 0.2471 belonged to the
+  published model), so fewer dsRNAs are marked `likely_edited`.
+- ML `length` feature fixed to the longer arm, as in training: probing scores now match the published
+  resource exactly when the fold matches.
+- `probing_model_score` is now on a 0-1 scale (min-max over the human set, as on the dsRNA browser);
+  `likely_forms` cutoff 0.440.
+
 ## [0.6.0] - unreleased
 
 - New compiled engine: same dsRNAs as before, 4-10x faster, bounded memory. The original

@@ -4,9 +4,12 @@
 //! Used by validation/duplex_parity.py to compare against RNA.duplexfold.
 
 use dsrnascan_core::duplex::{duplexfold, duplexfold_band, path_band};
+use dsrnascan_core::energy::energy;
 use std::io::{BufRead, Write};
 
 fn main() {
+    // optional first argument: temperature in Celsius (default 37)
+    let en = energy(std::env::args().nth(1).map_or(37.0, |t| t.parse().expect("temperature")));
     let stdin = std::io::stdin();
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     for line in stdin.lock().lines() {
@@ -16,9 +19,9 @@ fn main() {
         let d = if f.len() >= 4 {
             let (gaps, margin) = (f[2].parse().unwrap(), f[3].parse().unwrap());
             let (lo, hi) = path_band(a.len(), b.len(), gaps, margin);
-            duplexfold_band(a, b, lo, hi)
+            duplexfold_band(en, a, b, lo, hi)
         } else {
-            duplexfold(a, b)
+            duplexfold(en, a, b)
         };
         match d {
             Some(d) => writeln!(

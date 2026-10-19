@@ -13,44 +13,44 @@ Browse human genome results at [dsrna.chpc.utah.edu](http://dsrna.chpc.utah.edu)
 pip install dsrnascan
 ```
 
-Linux and macOS, Python 3.8+ (Windows: use WSL). If ViennaRNA fails via pip, install it with conda: `conda install -c bioconda viennarna`
+Linux and macOS, Python 3.8+ (Windows: use WSL).
 
 ## Usage
 
 ```bash
-# Basic scan (defaults: -w 10000 -s 500 --score 75 -c 4)
+# Scan a genome or transcriptome
 dsrnascan input.fasta
 
 # Scan a region
 dsrnascan genome.fasta --only_seq chr21 --start 33455482 --end 33655482
-
-# Faster fold (~99% identical results)
-dsrnascan genome.fasta --banded -c 8
-
-# Settings used for the human dsRNAome resource
-dsrnascan genome.fasta --v1
 ```
+
+By default dsRNAscan uses the settings of the human dsRNAome resource (`--v1`, on by default): windows of
+10000 and 3000 nt, step 150, and a banded fold that gives ~99% identical results to the exact one. Any
+setting you change is listed in `dsrnascan.log`.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `-w` | 10000 | Window size (bp) |
-| `-s/--step` | 500 | Step size between windows |
-| `-c/--cpus` | 4 | Number of CPUs |
+| `-w` | 10000 and 3000 | Window size (one window of this size if set) |
+| `-s/--step` | 150 | Step size between windows |
+| `-c/--cpus` | 4 (whole allocation in a SLURM job) | Number of CPUs |
 | `--score` | 75 | Minimum einverted score |
-| `--paired_cutoff` | 70 | Minimum % paired bases |
-| `--only_seq`, `--start/--end` | Full sequence | Chromosome and region to scan |
-| `--banded` | False | Faster fold (~99% identical results) |
-| `--v1` | False | Settings used for the human dsRNAome resource |
+| `--percent_paired_cutoff` | 70 | Minimum % paired bases after folding |
+| `--only_seq`, `--start/--end` | Full sequence | Sequence and region to scan |
+| `--exact` | off | Exact fold (slower) |
 | `--format` | bedpe | Output format: `bedpe`, `gff3`, or `both` |
 
 Run `dsrnascan --help` for all options.
 
 ## Output
 
-- **`*_merged_results.txt`**: one row per dsRNA with coordinates, einverted score, RNAduplex fold, structure and ML scores
+- **`*.dsrnas.txt`**: one row per dsRNA with coordinates, search score, duplex fold, structure and ML scores
 - **`*.bedpe`**: paired arm coordinates (default)
 - **`*.gff3`**: arms as linked features for IGV (`--format gff3` or `both`)
 - **`*.bp`**: base-pair arcs for IGV
+
+ML scores (`likely_edited`, `likely_forms`) come from structure-only models trained on human data, where
+inverted Alus dominate. Treat them as a rough guide, especially outside Alus and in other species. Both scores run 0-1 (cutoffs: stability 0.553, probing 0.440).
 
 ## Browse Results
 
@@ -75,4 +75,8 @@ GNU General Public License v3.0 - see [LICENSE](LICENSE). **Issues:** [GitHub Is
 
 ## Acknowledgments
 
-- EMBOSS einverted (search) and ViennaRNA duplexfold (folding), both reimplemented in dsRNAscan's compiled engine
+dsRNAscan's compiled engine reimplements:
+
+- **EMBOSS einverted** (inverted-repeat search): Rice P, Longden I, Bleasby A (2000) *Trends Genet* 16:276-277
+- **ViennaRNA duplexfold** (duplex folding): Lorenz R et al. (2011) *Algorithms Mol Biol* 6:26, with
+  Turner 2004 energy parameters (Mathews DH et al. (2004) *PNAS* 101:7287)
