@@ -1,0 +1,78 @@
+candidates: 15366 pairs (fresh dsrnascan-core run); sampled 2000 (seed 1); ViennaRNA 2.7.0; 31 s
+strata: long 500+=296, medium 151-499=478, medium 61-150=478, short 20-60=748
+duplex size: median 72 bp, max 1386 bp
+
+A. is ViennaRNA's eval of the same structure identical to duplexfold's energy? (checks the reference)
+fold_compound.eval_structure - duplexfold    n=2000   <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+
+B. duplex_energy.py vs RNA.duplexfold energy   (diff = mine - duplexfold, kcal/mol)
+profile duplexfold all                       n=2000   <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+profile nndb       all                       n=2000   <=0.01   1.50%  <=0.1   8.45%  <=0.5  47.85%  MAD 2.0508  max 68.99  mean(mine-ref) +1.2551
+   per stratum, profile duplexfold:
+   short 20-60                                  n=748    <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+   medium 61-150                                n=478    <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+   medium 151-499                               n=478    <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+   long 500+                                    n=296    <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+   per stratum, profile nndb:
+   short 20-60                                  n=748    <=0.01   2.67%  <=0.1  12.03%  <=0.5  72.06%  MAD 0.4459  max 11.56  mean(mine-ref) +0.1854
+   medium 61-150                                n=478    <=0.01   1.26%  <=0.1  10.46%  <=0.5  54.18%  MAD 0.8620  max 15.83  mean(mine-ref) +0.2382
+   medium 151-499                               n=478    <=0.01   0.84%  <=0.1   5.44%  <=0.5  28.87%  MAD 2.1465  max 24.50  mean(mine-ref) +0.9910
+   long 500+                                    n=296    <=0.01   0.00%  <=0.1   1.01%  <=0.5   7.09%  MAD 7.8718  max 68.99  mean(mine-ref) +6.0267
+
+C. same against ViennaRNA fold_compound.eval_structure
+profile duplexfold all                       n=2000   <=0.01 100.00%  <=0.1 100.00%  <=0.5 100.00%  MAD 0.0000  max 0.00  mean(mine-ref) +0.0000
+profile nndb       all                       n=2000   <=0.01   1.50%  <=0.1   8.45%  <=0.5  47.85%  MAD 2.0508  max 68.99  mean(mine-ref) +1.2551
+
+D. strict-NNDB profile: effect of each convention (value under duplexfold's convention minus NNDB value)
+   convention                                      pairs    mean, all mean, affected
+   stacks 2-decimal -> 0.1-rounded table            1993      -0.9556        -0.9590
+   initiation 4.09 -> 4.1                           2000      +0.0100        +0.0100
+   AU/GU end penalty 0.45 -> 0.5                    1826      +0.2066        +0.2263
+   no special C bulge                                229      +0.1192        +1.0415
+   no bulge state count (-RT ln n)                   815      +0.4148        +1.0180
+   no GGUC/CUGG 3-stack motif                         36      +0.0881        +4.8958
+   asymmetry penalty capped at 3.0                   428      -1.4736        -6.8860
+   interior GG/UU/2x3 mismatch values               1039      +0.3327        +0.6404
+
+E. effect of dropping duplexfold's flanking nucleotides (end mismatch/dangle terms) from the evaluation
+evaluate without flanks - duplexfold         n=2000   <=0.01  19.70%  <=0.1  21.90%  <=0.5  28.65%  MAD 0.9691  max 3.20  mean(mine-ref) +0.9691
+
+F. 10 worst pairs, profile duplexfold (diff = mine - RNA.duplexfold)
+   row 9      short 20-60     arms   56/54   bp 46   duplexfold    -78.40 mine    -78.40 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 9946   medium 151-499  arms  163/166  bp 125  duplexfold   -196.20 mine   -196.20 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 10023  short 20-60     arms   57/57   bp 48   duplexfold    -64.40 mine    -64.40 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 10019  medium 61-150   arms   87/87   bp 69   duplexfold   -103.30 mine   -103.30 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 10017  medium 61-150   arms  103/105  bp 75   duplexfold   -113.60 mine   -113.60 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 10010  medium 151-499  arms  159/159  bp 139  duplexfold   -255.00 mine   -255.00 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 10005  medium 151-499  arms  328/329  bp 286  duplexfold   -498.70 mine   -498.70 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 9990   long 500+       arms 1177/1174 bp 853  duplexfold  -1257.30 mine  -1257.30 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 9981   long 500+       arms 1198/1148 bp 923  duplexfold  -1485.90 mine  -1485.90 diff   +0.00  term: none (every term agrees to 0.005) 
+   row 9975   long 500+       arms  773/727  bp 586  duplexfold   -982.10 mine   -982.10 diff   +0.00  term: none (every term agrees to 0.005) 
+
+F. 10 worst pairs, profile nndb (diff = mine - RNA.duplexfold)
+   row 5887   long 500+       arms 1218/1218 bp 827  duplexfold  -1375.40 mine  -1306.41 diff  +68.99  term: interior interior 3x26 GC->CG mine 16.70 vienna 5.90  [largest convention: asymmetry penalty capped at 3.0]
+   row 13935  long 500+       arms 1960/1860 bp 1386 duplexfold  -2133.20 mine  -2083.54 diff  +49.66  term: interior interior 28x2 UG->GC mine 19.30 vienna 6.80  [largest convention: asymmetry penalty capped at 3.0]
+   row 13790  long 500+       arms 1361/1344 bp 977  duplexfold  -1624.20 mine  -1580.09 diff  +44.11  term: interior interior 1x29 AU->AU mine 21.90 vienna 8.10  [largest convention: asymmetry penalty capped at 3.0]
+   row 13573  long 500+       arms 1339/1365 bp 937  duplexfold  -1331.50 mine  -1289.16 diff  +42.34  term: interior interior 23x2 CG->CG mine 16.10 vienna 6.50  [largest convention: asymmetry penalty capped at 3.0]
+   row 6123   long 500+       arms 1313/1349 bp 956  duplexfold  -1395.60 mine  -1354.49 diff  +41.11  term: interior interior 2x26 UA->AU mine 17.50 vienna 6.40  [largest convention: asymmetry penalty capped at 3.0]
+   row 5237   long 500+       arms 1845/1791 bp 1377 duplexfold  -2095.60 mine  -2054.97 diff  +40.63  term: interior interior 20x2 AU->AU mine 15.60 vienna 7.80  [largest convention: asymmetry penalty capped at 3.0]
+   row 13794  long 500+       arms 1212/1236 bp 887  duplexfold  -1458.10 mine  -1422.85 diff  +35.25  term: interior interior 1x26 GC->GC mine 18.60 vienna 6.60  [largest convention: asymmetry penalty capped at 3.0]
+   row 13991  long 500+       arms 1327/1234 bp 938  duplexfold  -1489.10 mine  -1454.59 diff  +34.51  term: interior interior 28x2 UG->GC mine 19.30 vienna 6.80  [largest convention: asymmetry penalty capped at 3.0]
+   row 4934   long 500+       arms  853/851  bp 583  duplexfold   -865.50 mine   -831.06 diff  +34.44  term: interior interior 26x2 GU->CG mine 18.00 vienna 6.70  [largest convention: asymmetry penalty capped at 3.0]
+   row 185    long 500+       arms 1469/1465 bp 992  duplexfold  -1367.60 mine  -1333.20 diff  +34.40  term: interior interior 27x2 UA->GU mine 18.60 vienna 6.70  [largest convention: asymmetry penalty capped at 3.0]
+
+G. constructed duplexes: profile duplexfold vs fold_compound.eval_structure (max |diff| over cases)
+   helix ends (22500)                                   n=22500  max|diff| 0.0000  cases off by > 0.005: 0
+   1x1 table (every entry)                              n=576    max|diff| 0.0000  cases off by > 0.005: 0
+   1x2 table (every entry)                              n=2304   max|diff| 0.0000  cases off by > 0.005: 0
+   2x1 (rotated 1x2) (every entry)                      n=2304   max|diff| 0.0000  cases off by > 0.005: 0
+   2x2 table (every entry)                              n=9216   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 3x3 (first mismatches x all pairs)          n=9216   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 2x4 (first mismatches x all pairs)          n=9216   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 2x3 (first mismatches x all pairs)          n=9216   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 3x2 (first mismatches x all pairs)          n=9216   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 1x3 (first mismatches x all pairs)          n=2304   max|diff| 0.0000  cases off by > 0.005: 0
+   interior 1x5 (first mismatches x all pairs)          n=2304   max|diff| 0.0000  cases off by > 0.005: 0
+   bulges 1-30 nt, both strands                         n=2016   max|diff| 0.0000  cases off by > 0.005: 0
+   large asymmetric / symmetric loops                   n=900    max|diff| 0.0000  cases off by > 0.005: 0
+   N in flanks and loops (3000)                         n=3000   max|diff| 0.0000  cases off by > 0.005: 0

@@ -1,0 +1,113 @@
+# Build dsrnascan wheels (Python package + compiled engine) for every platform, test them, and
+# publish to PyPI. Runs on demand (build + test only) or on a v* tag (build + test + publish).
+name: Build and release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  wheels:
+    name: wheel ${{ matrix.os }} ${{ matrix.target }} ${{ matrix.manylinux }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { os: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { os: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
+          - { os: macos-14, target: aarch64, manylinux: auto }
+          - { os: macos-13, target: x86_64, manylinux: auto }
+          - { os: windows-latest, target: x64, manylinux: auto }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  # Install each native wheel and run a small scan before anything is published.
+  test:
+    needs: wheels
+    name: test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, wheel: wheel-ubuntu-latest-x86_64-auto }
+          - { os: macos-14, wheel: wheel-macos-14-aarch64-auto }
+          - { os: macos-13, wheel: wheel-macos-13-x86_64-auto }
+          - { os: windows-latest, wheel: wheel-windows-latest-x64-auto }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.wheel }}
+          path: dist
+      - name: Full package (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          pip install dist/*.whl
+          dsrnascan --version
+          dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --output-dir out_default
+          dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --v1 --output-dir out_v1
+          test "$(tail -n +2 out_default/*_merged_results.txt | wc -l)" -gt 0
+          test "$(tail -n +2 out_v1/*_merged_results.txt | wc -l)" -gt 0
+      - name: Compiled engine only (Windows; ViennaRNA has no Windows wheels)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          pip install --no-deps dist/*.whl
+          python -c "
+          # load the extension file directly: the package __init__ needs ViennaRNA, absent here
+          import glob, importlib.machinery, importlib.util, os, sysconfig
+          path = glob.glob(os.path.join(sysconfig.get_paths()['platlib'], 'dsrnascan', '_core*.pyd'))[0]
+          loader = importlib.machinery.ExtensionFileLoader('dsrnascan._core', path)
+          spec = importlib.util.spec_from_file_location('dsrnascan._core', path, loader=loader)
+          _core = importlib.util.module_from_spec(spec); loader.exec_module(_core)
+          seq = ''.join(l.strip() for l in open('tests/data/chr19_1000001-1100000.fa') if not l.startswith('>'))
+          cols = _core.scan([('t', 0, seq.encode())])
+          n = len(cols['Chromosome'])
+          print('engine', _core.__version__, 'dsRNAs', n)
+          assert n > 0
+          "
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [wheels, sdist, test]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

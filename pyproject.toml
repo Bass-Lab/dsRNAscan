@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
 [project]
 name = "dsrnascan"
-version = "0.5.5"
+version = "0.6.0"
 description = "A tool for genome-wide prediction of double-stranded RNA structures"
 readme = "README.md"
 authors = [
@@ -59,12 +59,16 @@ Documentation = "https://github.com/Bass-Lab/dsRNAscan/blob/main/README.md"
 Repository = "https://github.com/Bass-Lab/dsRNAscan"
 "Bug Tracker" = "https://github.com/Bass-Lab/dsRNAscan/issues"
 
-[tool.setuptools]
-py-modules = ["dsRNAscan"]
-include-package-data = true
-
-[tool.setuptools.package-data]
-"*" = ["tools/*", "*.patch", "*.c"]
+[tool.maturin]
+# the compiled scanning engine (dsrnascan-core/) is built into the package as dsrnascan._core
+manifest-path = "dsrnascan-core/Cargo.toml"
+module-name = "dsrnascan._core"
+features = ["python"]
+exclude = [
+    "dsrnascan/dsRNAscan_optimized.py",
+    "dsrnascan/tools/platform_binaries/einverted_linux_i386",
+    "dsrnascan/**/__pycache__/**",
+]
 
 [tool.black]
 line-length = 100

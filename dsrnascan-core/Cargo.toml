@@ -1,0 +1,26 @@
+[package]
+name = "dsrnascan-core"
+version = "0.6.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Single-sweep inverted-repeat scanner for dsRNAscan"
+
+# rayon: one work-stealing pool shared by sequences, strands, sweep blocks, windows and folds.
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
+
+[lib]
+name = "dsrnascan_core"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# Python extension module (built by maturin: see pyproject.toml)
+python = ["dep:pyo3"]
+
+[dependencies]
+rayon = "1"
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"], optional = true }

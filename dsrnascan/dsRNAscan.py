@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.5.5'
+__version__ = '0.6.0'
 __author__ = 'Bass Lab'
 
 import os
@@ -139,6 +139,11 @@ possible_paths.extend([
 
 einverted_bin = None
 for path in possible_paths:
+    if os.path.exists(path) and not os.access(path, os.X_OK) and not is_windows:
+        try:  # source installs can drop the executable bit of the bundled binaries
+            os.chmod(path, os.stat(path).st_mode | 0o111)
+        except OSError:
+            pass
     if os.path.exists(path) and os.access(path, os.X_OK):
         einverted_bin = path
         break
@@ -163,18 +168,16 @@ def smart_open(filename, mode='rt'):
     else:
         return open(filename, mode)
 
-# Check if einverted binary exists
-if not os.path.exists(einverted_bin):
-    print(f"Error: einverted binary not found at {einverted_bin}")
-    print("Please ensure the einverted tool is installed in the 'tools' subdirectory.")
-    print("You can install it by running the installation script or downloading from EMBOSS.")
-    sys.exit(1)
-
-# Check if einverted is executable
-if not os.access(einverted_bin, os.X_OK):
-    print(f"Error: einverted binary at {einverted_bin} is not executable.")
-    print("Please run: chmod +x {}".format(einverted_bin))
-    sys.exit(1)
+def require_einverted():
+    """The legacy pipeline needs a working einverted binary; the compiled engine does not."""
+    if not os.path.exists(einverted_bin):
+        print(f"Error: einverted binary not found at {einverted_bin}")
+        print("Please ensure the einverted tool is installed in the 'tools' subdirectory.")
+        sys.exit(1)
+    if not os.access(einverted_bin, os.X_OK):
+        print(f"Error: einverted binary at {einverted_bin} is not executable.")
+        print("Please run: chmod +x {}".format(einverted_bin))
+        sys.exit(1)
 
 # Fast G-U wobble pairing check (run only once at startup)
 GU_WOBBLE_VERIFIED = False
@@ -644,68 +647,28 @@ def count_base_pairs(structure):
 
 def find_longest_helix(structure):
     """
-    Find the longest stretch of contiguous base pairs in an RNA structure.
-    
-    This version properly matches corresponding positions in both arms.
-    A helix is only continuous if BOTH arms have pairs at corresponding positions.
-    
-    Args:
-        structure (str): String representing RNA structure (e.g., "((((((&))).)))")
-        
-    Returns:
-        int: Length of the longest contiguous helix
+    Longest run of directly stacked base pairs in an RNAduplex structure ("((.((&)).))").
+
+    The k-th '(' on the left arm pairs with the k-th ')' counted from the end of the right
+    arm. Consecutive pairs (a, b) and (a+1, b-1) stack; a bulge or interior loop on EITHER
+    arm ends the helix. This is the ML models' bp_count: it equals the training data's
+    bp_count in 99,999/99,999 joined chr1 dsRNAs (notes.md, 2026-10-17).
+
+    (Replaces an unused version of this function that compared left position i with right
+    position n-1-i, which drifts after any bulge.)
     """
-    try:
-        # Handle invalid or empty structures
-        if not structure or "&" not in structure:
-            return 0
-            
-        # Split structure into both arms
-        parts = structure.split("&")
-        if len(parts) != 2:
-            return 0
-            
-        left_arm, right_arm = parts[0], parts[1]
-        
-        # The arms should be the same length for a valid duplex
-        if len(left_arm) != len(right_arm):
-            # If arms are different lengths, use the shorter one
-            min_len = min(len(left_arm), len(right_arm))
-            left_arm = left_arm[:min_len]
-            right_arm = right_arm[:min_len]
-        
-        # Create a paired array - True where both positions form a pair
-        # In RNAduplex notation:
-        # - position i in left arm pairs with position (n-1-i) in right arm
-        # - '(' in left should correspond to ')' at the mirrored position in right
-        n = len(left_arm)
-        paired = []
-        
-        for i in range(n):
-            # Check if position i in left arm pairs with position n-1-i in right arm
-            left_char = left_arm[i]
-            right_char = right_arm[n - 1 - i]
-            
-            # Both must be paired (not '.') for this position to be part of a helix
-            is_paired = (left_char == '(' and right_char == ')')
-            paired.append(is_paired)
-        
-        # Now find the longest continuous stretch of True values
-        max_helix = 0
-        current_helix = 0
-        
-        for is_paired in paired:
-            if is_paired:
-                current_helix += 1
-                max_helix = max(max_helix, current_helix)
-            else:
-                current_helix = 0
-        
-        return max_helix
-        
-    except Exception as e:
-        print(f"Error calculating longest helix: {e}")
+    if not structure or structure.count("&") != 1:
         return 0
+    left_arm, right_arm = structure.split("&")
+    lefts = [i for i, ch in enumerate(left_arm) if ch == "("]
+    rights = [j for j, ch in enumerate(right_arm) if ch == ")"][::-1]
+    best = run = 0
+    prev = None
+    for a, b in zip(lefts, rights):
+        run = run + 1 if prev is not None and a == prev[0] + 1 and b == prev[1] - 1 else 1
+        best = max(best, run)
+        prev = (a, b)
+    return best
 
 # ==============================================================================
 # DataFrame Processing Classes and Functions
@@ -717,128 +680,12 @@ def get_memory_usage():
     process = psutil.Process(os.getpid())
     return process.memory_info().rss / 1024 / 1024
 
-def process_sequence_einverted(row_data):
-    """Process a single sequence through einverted (top-level function for pickling)"""
-    import subprocess  # Import here for pickling
-    row, einverted_bin, args = row_data
-    results = []
-    
-    # Run einverted
-    stdin_input = f">{row['seq_hash']}\n{row['sequence']}\n"
-    
-    # -maxrepeat is the total span (start of arm1 to end of arm2), not arm length.
-    # The window is the natural ceiling (einverted only sees this window), and
-    # --max_span may restrict it further to search for shorter-span duplexes.
-    window_size = len(row['sequence'])
-    if hasattr(args, 'max_span') and args.max_span is not None:
-        max_repeat = min(window_size, args.max_span)
-    else:
-        max_repeat = window_size
-
-    cmd = [
-        einverted_bin,
-        "-sequence", "stdin",
-        "-gap", str(args.gap),
-        "-threshold", str(args.score),
-        "-match", str(args.match),
-        "-mismatch", str(args.mismatch),
-        "-maxrepeat", str(max_repeat),
-        "-outfile", "stdout",
-        "-outseq", "/dev/null"
-    ]
-    
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        stdout, stderr = process.communicate(input=stdin_input)
-            
-        # Parse einverted output
-        lines = stdout.split('\n')
-        
-        j = 0
-        # Changed: Process ALL lines, not just len(lines) - 4
-        while j < len(lines):
-            # Skip empty lines
-            if not lines[j] or j + 3 >= len(lines):
-                j += 1
-                continue
-                
-            # Look for lines starting with our seq_hash
-            # Format: "seq_hash: Score 49: 51/68 ( 75%) matches, 3 gaps"
-            if lines[j].startswith(row['seq_hash'] + ':'):
-                # The score info is on the same line as the sequence ID
-                score_line = lines[j].split()
-                seq_i_full = lines[j + 1].split()
-                seq_j_full = lines[j + 3].split()
-                
-                if len(score_line) >= 4 and len(seq_i_full) >= 3 and len(seq_j_full) >= 3:
-                    score = score_line[2].rstrip(':')
-                    raw_match = score_line[3]
-                    matches, total = map(int, raw_match.split('/'))
-                    match_perc = round((matches / total) * 100, 2)
-                    
-                    # Extract gap count from the score line
-                    gap_numb = 0
-                    for i, part in enumerate(score_line):
-                        if 'gap' in part.lower():
-                            if i > 0 and score_line[i-1].isdigit():
-                                gap_numb = int(score_line[i-1])
-                            break
-                    
-                    # Local coordinates within the window
-                    i_start_local = int(seq_i_full[0])
-                    i_end_local = int(seq_i_full[2])
-                    j_start_local = int(seq_j_full[2])
-                    j_end_local = int(seq_j_full[0])
-                    
-                    # Extract sequences for RNAduplex
-                    i_seq = seq_i_full[1].replace("-", "").upper()
-                    j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
-                    
-                    # For reverse strand, we need to reverse the sequences
-                    # This is because einverted reports them in the original orientation
-                    # but we need them in the reverse orientation for proper pairing
-                    if row.get('strand', '+') == '-':
-                        i_seq = i_seq[::-1]
-                        j_seq = j_seq[::-1]
-
-                    results.append({
-                        'seq_hash': row['seq_hash'],
-                        'strand': row.get('strand', '+'),  # Keep strand info
-                        'i_start_local': i_start_local,
-                        'i_end_local': i_end_local,
-                        'j_start_local': j_start_local,
-                        'j_end_local': j_end_local,
-                        'score': score,
-                        'raw_match': raw_match,  # Store the actual match ratio
-                        'match_perc': match_perc,
-                        'gap_numb': gap_numb,  # Store the gap count
-                        'i_seq': i_seq,
-                        'j_seq': j_seq
-                    })
-                
-                # Move to next potential result (einverted results are typically 5 lines)
-                # But we'll keep checking line by line to not miss anything
-                j += 4  # Skip the 4 lines we just processed, will increment by 1 in next iteration
-            else:
-                j += 1
-                
-    except Exception as e:
-        print(f"Error processing sequence {row['seq_hash']}: {e}")
-    
-    return results
-
-
 def process_einverted_batch(batch_data):
     """Run einverted once over MANY window records (multi-FASTA), reusing the DP
-    matrix across records (see einverted_src/). Parses hits per record by seq_hash.
-    Returns the same dicts as process_sequence_einverted. Added in 0.5.5."""
-    import subprocess
+    matrix across records (see einverted_src/). Parses hits per record by seq_hash
+    into the result dicts consumed by run_rnaduplex_batch. Added in 0.6.0.
+    Raises RuntimeError if einverted exits nonzero: partial stdout from a crashed
+    process would otherwise silently drop every remaining window in the batch."""
     rows, einverted_bin, args = batch_data
     results = []
     if not rows:
@@ -848,7 +695,9 @@ def process_einverted_batch(batch_data):
     for row in rows:
         by_hash[str(row['seq_hash'])] = row
         fasta_parts.append(f">{row['seq_hash']}\n{row['sequence']}\n")
-    # maxrepeat = min(window_size, max_span), matching process_sequence_einverted.
+    # -maxrepeat is the total span (start of arm1 to end of arm2), not arm length.
+    # The window is the natural ceiling (einverted only sees this window), and
+    # --max_span may restrict it further to search for shorter-span duplexes.
     # The largest window in the batch sets it; shorter windows are naturally limited
     # to their own length, so a larger -maxrepeat yields identical hits.
     window_size = max(len(r['sequence']) for r in rows)
@@ -860,56 +709,58 @@ def process_einverted_batch(batch_data):
            "-threshold", str(args.score), "-match", str(args.match),
            "-mismatch", str(args.mismatch),
            "-maxrepeat", str(max_repeat), "-outfile", "stdout", "-outseq", "/dev/null"]
-    try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
-        stdout, stderr = proc.communicate(input="".join(fasta_parts))
-        lines = stdout.split('\n')
-        j = 0
-        while j < len(lines):
-            if not lines[j] or j + 3 >= len(lines):
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    stdout, stderr = proc.communicate(input="".join(fasta_parts))
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"einverted exited with code {proc.returncode} on a batch of "
+            f"{len(rows)} windows; its output cannot be trusted. "
+            f"stderr: {stderr.strip()[-500:] or '(empty)'}")
+    lines = stdout.split('\n')
+    j = 0
+    while j < len(lines):
+        if not lines[j] or j + 3 >= len(lines):
+            j += 1
+            continue
+        if ': Score ' in lines[j]:
+            name = lines[j].split(':')[0]
+            row = by_hash.get(name)
+            if row is None:
                 j += 1
                 continue
-            if ': Score ' in lines[j]:
-                name = lines[j].split(':')[0]
-                row = by_hash.get(name)
-                if row is None:
-                    j += 1
-                    continue
-                score_line = lines[j].split()
-                seq_i_full = lines[j + 1].split()
-                seq_j_full = lines[j + 3].split()
-                if len(score_line) >= 4 and len(seq_i_full) >= 3 and len(seq_j_full) >= 3:
-                    score = score_line[2].rstrip(':')
-                    raw_match = score_line[3]
-                    matches, total = map(int, raw_match.split('/'))
-                    match_perc = round((matches / total) * 100, 2)
-                    gap_numb = 0
-                    for gi, part in enumerate(score_line):
-                        if 'gap' in part.lower():
-                            if gi > 0 and score_line[gi - 1].isdigit():
-                                gap_numb = int(score_line[gi - 1])
-                            break
-                    i_start_local = int(seq_i_full[0])
-                    i_end_local = int(seq_i_full[2])
-                    j_start_local = int(seq_j_full[2])
-                    j_end_local = int(seq_j_full[0])
-                    i_seq = seq_i_full[1].replace("-", "").upper()
-                    j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
-                    if row.get('strand', '+') == '-':
-                        i_seq = i_seq[::-1]
-                        j_seq = j_seq[::-1]
-                    results.append({
-                        'seq_hash': row['seq_hash'], 'strand': row.get('strand', '+'),
-                        'i_start_local': i_start_local, 'i_end_local': i_end_local,
-                        'j_start_local': j_start_local, 'j_end_local': j_end_local,
-                        'score': score, 'raw_match': raw_match, 'match_perc': match_perc,
-                        'gap_numb': gap_numb, 'i_seq': i_seq, 'j_seq': j_seq})
-                j += 4
-            else:
-                j += 1
-    except Exception as e:
-        print(f"Error processing einverted batch: {e}")
+            score_line = lines[j].split()
+            seq_i_full = lines[j + 1].split()
+            seq_j_full = lines[j + 3].split()
+            if len(score_line) >= 4 and len(seq_i_full) >= 3 and len(seq_j_full) >= 3:
+                score = score_line[2].rstrip(':')
+                raw_match = score_line[3]
+                matches, total = map(int, raw_match.split('/'))
+                match_perc = round((matches / total) * 100, 2)
+                gap_numb = 0
+                for gi, part in enumerate(score_line):
+                    if 'gap' in part.lower():
+                        if gi > 0 and score_line[gi - 1].isdigit():
+                            gap_numb = int(score_line[gi - 1])
+                        break
+                i_start_local = int(seq_i_full[0])
+                i_end_local = int(seq_i_full[2])
+                j_start_local = int(seq_j_full[2])
+                j_end_local = int(seq_j_full[0])
+                i_seq = seq_i_full[1].replace("-", "").upper()
+                j_seq = ''.join(reversed(seq_j_full[1].replace("-", ""))).upper()
+                if row.get('strand', '+') == '-':
+                    i_seq = i_seq[::-1]
+                    j_seq = j_seq[::-1]
+                results.append({
+                    'seq_hash': row['seq_hash'], 'strand': row.get('strand', '+'),
+                    'i_start_local': i_start_local, 'i_end_local': i_end_local,
+                    'j_start_local': j_start_local, 'j_end_local': j_end_local,
+                    'score': score, 'raw_match': raw_match, 'match_perc': match_perc,
+                    'gap_numb': gap_numb, 'i_seq': i_seq, 'j_seq': j_seq})
+            j += 4
+        else:
+            j += 1
     return results
 
 
@@ -1084,7 +935,7 @@ class ChunkedDsRNAProcessor:
         batch per worker and processed by a SINGLE einverted call each (multi-FASTA),
         so the reuse-capable einverted initialises its DP matrix once per worker
         instead of once per window. ProcessPool parallelism and output are unchanged
-        vs the per-window path. (0.5.5)"""
+        vs the per-window path. (0.6.0)"""
         if sequences_df.empty:
             return pd.DataFrame()
         rows = [row for _, row in sequences_df.iterrows()]
@@ -1103,11 +954,11 @@ class ChunkedDsRNAProcessor:
             with tqdm(total=len(rows), desc="    einverted", unit="win",
                       disable=not self.verbose) as pbar:
                 for future in as_completed(futures):
-                    try:
-                        results = future.result()
-                        all_results.extend(results)
-                    except Exception as e:
-                        print(f"Error getting einverted batch results: {e}")
+                    # A failed batch means einverted crashed or its output could
+                    # not be parsed; continuing would silently drop hundreds of
+                    # windows, so fail the scan loudly instead.
+                    results = future.result()
+                    all_results.extend(results)
                     pbar.update(len(batches[futures[future]]))
         return pd.DataFrame(all_results)
 
@@ -1235,29 +1086,29 @@ class ChunkedDsRNAProcessor:
         return einverted_df
     
     def find_longest_helix(self, structure):
-        """Find the longest consecutive helix in the structure"""
-        if not structure:
-            return 0
-        
-        # Split by '&' and take the first part (i-arm)
-        parts = structure.split('&')
-        if not parts:
-            return 0
-        
-        i_structure = parts[0]
-        
-        # Find longest consecutive run of '(' characters
-        max_helix = 0
-        current_helix = 0
-        
-        for char in i_structure:
-            if char == '(':
-                current_helix += 1
-                max_helix = max(max_helix, current_helix)
-            else:
-                current_helix = 0
-        
-        return max_helix
+        """Longest run of stacked base pairs; see the module-level find_longest_helix."""
+        return find_longest_helix(structure)
+
+        # REVISIT (2026-10-17): the previous implementation, kept for comparison. It counted the
+        # longest run of '(' on the LEFT arm only, so a bulge on the right arm never broke the
+        # run and the helix was overestimated in ~40% of dsRNAs (e.g. 24 vs 10). The ML models'
+        # bp_count is the true stacked-helix length, so earlier releases fed the models an
+        # inflated feature. Evaluate how much ML scores on published outputs shift.
+        # if not structure:
+        #     return 0
+        # parts = structure.split('&')
+        # if not parts:
+        #     return 0
+        # i_structure = parts[0]
+        # max_helix = 0
+        # current_helix = 0
+        # for char in i_structure:
+        #     if char == '(':
+        #         current_helix += 1
+        #         max_helix = max(max_helix, current_helix)
+        #     else:
+        #         current_helix = 0
+        # return max_helix
     
     def map_to_genomic_coords(self, einverted_df, coord_map, region_offset=0, seq_len=None):
         """Map einverted results to genomic coordinates
@@ -1498,7 +1349,8 @@ class ChunkedDsRNAProcessor:
         structures = df['structure'].values
         base_pairs_vec = np.array([x.count('(') if x else 0 for x in structures])
         lengths_vec = np.array([len(x) - 1 if x else 1 for x in structures])
-        df = df.copy()
+        # drop_duplicates above always returns a fresh frame, so adding columns
+        # in place is safe -- no defensive copy needed.
         df['percent_paired'] = np.round(base_pairs_vec * 2 / lengths_vec * 100, 2)
         df['base_pairs'] = base_pairs_vec
 
@@ -1528,12 +1380,14 @@ class ChunkedDsRNAProcessor:
             n1 = len(df)
             df = self.eliminate_nested_dsrnas(df)
             stats['nested'] = n1 - len(df)
-            # Re-apply after elimination. This is a no-op today (elimination only drops
-            # rows, it never alters the gated columns), but it keeps the guarantee local
-            # rather than resting on that invariant holding forever.
-            n3 = len(df)
-            df = df[quality_mask(df)]
-            stats['filtered'] += n3 - len(df)
+            # Elimination only drops rows, it never alters the gated columns, so the
+            # quality mask must still hold. Re-filter only if that invariant is ever
+            # violated (avoids an unconditional full-frame copy per chromosome).
+            m = quality_mask(df)
+            if not m.all():
+                self.log("  Warning: nested elimination altered quality-gated columns; re-filtering")
+                df = df[m]
+                stats['filtered'] += int((~m).sum())
         # Lever 1: shrink the persistent footprint. Long sequence/structure strings dominate
         # memory; PyArrow-backed strings drop the per-object Python overhead (~2x); coordinates
         # fit in int32. Best-effort -- leaves dtypes untouched if PyArrow is unavailable.
@@ -1548,11 +1402,17 @@ class ChunkedDsRNAProcessor:
                     df[c] = df[c].astype('string[pyarrow]')
                 except Exception:
                     pass
+        # astype('int32') silently wraps out-of-range values (it does not raise),
+        # so only downcast when every value fits -- chromosomes over 2^31-1 bp
+        # (axolotl, lungfish) must keep int64 coordinates.
+        i32 = np.iinfo(np.int32)
         for c in ('i_start', 'i_end', 'j_start', 'j_end',
                   'eff_i_start', 'eff_i_end', 'eff_j_start', 'eff_j_end'):
             if c in df.columns:
                 try:
-                    df[c] = df[c].astype('int32')
+                    col = df[c]
+                    if len(col) and col.min() >= i32.min and col.max() <= i32.max:
+                        df[c] = col.astype('int32')
                 except Exception:
                     pass
         return df
@@ -1581,6 +1441,7 @@ class ChunkedDsRNAProcessor:
         initial_memory = get_memory_usage()
         
         final_results = []          # per-chromosome FINALIZED results (bounds peak memory)
+        chrom_index = {}            # chromosome ID -> index in final_results (guards duplicate IDs)
         dedup_total = nested_total = filtered_total = 0
         total_windows = 0
         total_unique = 0
@@ -1692,16 +1553,28 @@ class ChunkedDsRNAProcessor:
                 # End of chromosome: finalize + flush so peak memory stays bounded to a
                 # single chromosome, not the whole genome. Output is identical -- the dedup
                 # key includes 'chromosome' and nested-elimination groups by
-                # (chromosome, strand), so nothing is cross-chromosome.
+                # (chromosome, strand), so nothing is cross-chromosome. If the same ID
+                # appears in a later FASTA record (malformed but possible input), merge
+                # with the earlier record's results and re-finalize together so dedup and
+                # nested-elimination stay equivalent to genome-wide finalization.
                 if chrom_chunks:
                     chrom_df = pd.concat(chrom_chunks, ignore_index=True)
                     chrom_chunks = []
+                    prev_idx = chrom_index.get(chromosome)
+                    if prev_idx is not None:
+                        self.log(f"  Warning: chromosome ID '{chromosome}' appears in multiple "
+                                 f"FASTA records; merging their results before deduplication")
+                        chrom_df = pd.concat([final_results[prev_idx], chrom_df],
+                                             ignore_index=True)
                     chrom_final, _st = self._finalize_chromosome(chrom_df, args)
                     del chrom_df
                     dedup_total += _st['dedup']
                     nested_total += _st['nested']
                     filtered_total += _st['filtered']
-                    if not chrom_final.empty:
+                    if prev_idx is not None:
+                        final_results[prev_idx] = chrom_final
+                    elif not chrom_final.empty:
+                        chrom_index[chromosome] = len(final_results)
                         final_results.append(chrom_final)
         finally:
             handle.close()
@@ -1709,10 +1582,12 @@ class ChunkedDsRNAProcessor:
         # Combine per-chromosome finalized results (each already deduped/nested/filtered)
         if final_results:
             all_results_df = pd.concat(final_results, ignore_index=True)
-            # Restore global row order (chromosomes stream in FASTA order; the
-            # non-streaming path sorted the whole genome). Keeps output order stable.
-            all_results_df = all_results_df.sort_values(
-                ['chromosome', 'strand', 'i_start'], ignore_index=True)
+            # Restore 0.5.4's global row order. On the default path the old genome-wide
+            # eliminate_nested_dsrnas sorted by these keys; with --no-eliminate-nested
+            # 0.5.4 never sorted, so preserve raw streaming order there too.
+            if not getattr(args, 'no_eliminate_nested', False):
+                all_results_df = all_results_df.sort_values(
+                    ['chromosome', 'strand', 'i_start'], ignore_index=True)
             if self.verbose:
                 if dedup_total:
                     self.log(f"Removed {dedup_total} duplicate entries (identical coordinates and sequences)")
@@ -1796,6 +1671,68 @@ class ProcessorArgs:
         self.output_label = original_args.output_label
         self.no_eliminate_nested = original_args.no_eliminate_nested
 
+def use_core(args):
+    """Scan with the compiled engine (dsrnascan._core, built from dsrnascan-core/), which gives the same
+    dsRNAs as the einverted pipeline. The einverted pipeline is kept as a legacy path: on request
+    (--legacy-einverted), for -t other than 37 (the core's energy tables are 37 C only), and as a
+    fallback if the core is not installed."""
+    needs_core = args.v1 or args.minus_revcomp
+    if args.legacy_einverted:
+        if needs_core:
+            sys.exit("--v1/--minus-revcomp need the compiled engine; they cannot be combined with --legacy-einverted")
+        return False
+    try:
+        from dsrnascan import _core  # noqa: F401
+    except ImportError:
+        if needs_core:
+            sys.exit("--v1/--minus-revcomp need the compiled engine, which is missing from this install (reinstall dsrnascan)")
+        print("Note: the compiled engine is missing from this install; using the legacy einverted pipeline (same results, slower).")
+        return False
+    if args.t != 37:
+        if needs_core:
+            sys.exit("--v1/--minus-revcomp need the compiled engine, which supports -t 37 only")
+        print(f"Note: -t {args.t}: using the legacy einverted pipeline (the compiled engine is 37 C only).")
+        return False
+    return True
+
+
+def scan_with_core(args):
+    """Scan with the compiled engine. Reads the FASTA and applies --only_seq/--start/--end exactly as
+    ChunkedDsRNAProcessor.process_fasta does; returns the same results DataFrame."""
+    from dsrnascan import _core as dsrnascan_core
+    records, lengths = [], []
+    with smart_open(args.filename) as handle:
+        for record in SeqIO.parse(handle, "fasta"):
+            if args.only_seq and record.id != args.only_seq:
+                continue
+            seq = str(record.seq).upper()
+            lengths.append(len(seq))  # lets --minus-revcomp regions use the whole-chromosome window grid
+            offset = 0
+            if args.start > 0 or args.end > 0:
+                offset = max(0, args.start - 1)
+                seq = seq[offset:args.end if args.end > 0 else len(seq)]
+            records.append((record.id, offset, seq.encode()))
+    strands = 'plus' if args.forward_only else 'minus' if args.reverse_only else 'both'
+    pp = args.percent_paired_cutoff if args.percent_paired_cutoff is not None else args.paired_cutoff
+    windows, step, min_bp, min_match = [], args.step, args.min_bp, args.paired_cutoff
+    if args.v1:  # settings used for the human dsRNAome resource
+        windows, step, min_bp, min_match = [10000, 3000], 150, 0, 0
+    t0 = time.time()
+    cols = dsrnascan_core.scan(
+        records, strands=strands, threads=args.cpus, window=args.w, max_span=min(args.w, args.max_span),
+        step=step, threshold=args.score, match_score=args.match, mismatch=args.mismatch, gap=args.gaps,
+        min_match_perc=min_match, min_percent_paired=pp, min_bp=min_bp,
+        eliminate_nested=not args.no_eliminate_nested, banded=args.banded or args.v1,
+        windows=windows, minus_revcomp=args.minus_revcomp or args.v1, lengths=lengths)
+    results = pd.DataFrame(cols).rename(columns={
+        'Chromosome': 'chromosome', 'Strand': 'strand', 'Score': 'score', 'RawMatch': 'raw_match',
+        'PercMatch': 'match_perc', 'Gaps': 'gap_numb', 'dG(kcal/mol)': 'energy'})
+    print(f"compiled engine v{dsrnascan_core.__version__}: {len(results)} dsRNAs from "
+          f"{sum(len(r[2]) for r in records):,} bp ({strands} strands) in {time.time() - t0:.1f} s"
+          f"{' (banded fold)' if args.banded else ''}")
+    return results
+
+
 def run_dataframe_approach(args):
     """Run the optimized DataFrame approach"""
     import logging
@@ -1870,8 +1807,11 @@ def run_dataframe_approach(args):
         verbose=True
     )
     
-    # Process the file
-    results = processor.process_fasta(processor_args.filename, einverted_bin, processor_args)
+    # Process the file: the compiled core when available (same output, one sweep), else einverted
+    results = scan_with_core(args) if use_core(args) else None
+    if results is None:
+        require_einverted()
+        results = processor.process_fasta(processor_args.filename, einverted_bin, processor_args)
     
     # Output directory already created above for logging
     
@@ -2030,6 +1970,14 @@ def main():
                         help='Windows per chunk for DataFrame approach (default: 10000)')
     parser.add_argument('--no-eliminate-nested', action='store_true', default=False,
                         help='Disable removal of nested dsRNAs (default: removal enabled)')
+    parser.add_argument('--legacy-einverted', action='store_true', default=False,
+                        help='Use the original einverted pipeline (same results, slower)')
+    parser.add_argument('--v1', action='store_true', default=False,
+                        help='Settings used for the human dsRNAome resource')
+    parser.add_argument('--minus-revcomp', action='store_true', default=False,
+                        help='Scan the minus strand on its reverse complement')
+    parser.add_argument('--banded', action='store_true', default=False,
+                        help='Faster fold (~99%% identical results)')
     parser.add_argument('--no-ml', action='store_true', default=False,
                         help='Disable ML scoring of predictions (default: scoring enabled if ydf/sklearn installed)')
     parser.add_argument('--format', type=str, default='bedpe', choices=['bedpe', 'gff3', 'both'],
@@ -2087,6 +2035,13 @@ def main():
         parser.error("Number of CPUs must be greater than 0")
     if args.paired_cutoff < 0 or args.paired_cutoff > 100:
         parser.error("Paired cutoff must be between 0 and 100")
+    if args.percent_paired_cutoff is not None and \
+            (args.percent_paired_cutoff < 0 or args.percent_paired_cutoff > 100):
+        parser.error("Percent paired cutoff must be between 0 and 100")
+    # Resolve the None-means-inherit convention here so every downstream consumer
+    # (ProcessorArgs, _finalize_chromosome) sees the effective cutoff.
+    if args.percent_paired_cutoff is None:
+        args.percent_paired_cutoff = args.paired_cutoff
     if args.start < 0:
         parser.error("Start coordinate must be non-negative")
     if args.end < 0:
@@ -2102,17 +2057,12 @@ def main():
     if os.path.getsize(args.filename) == 0:
         parser.error(f"Input file '{args.filename}' is empty")
     
-    # Print einverted info and verify G-U wobble support
-    print(f"Using einverted binary: {einverted_bin}")
-    # Add more details about the binary being used
-    if os.path.exists(einverted_bin):
-        file_stat = os.stat(einverted_bin)
-        print(f"  Binary size: {file_stat.st_size:,} bytes")
-        print(f"  Binary permissions: {oct(file_stat.st_mode)[-3:]}")
-        print(f"  Binary path exists: ✓")
-    if verify_gu_wobble_support():
-        print("✓ G-U wobble pairing support verified")
-    # If verification fails, warning was already printed in the function
+    # The legacy pipeline (requested, or for -t other than 37) runs einverted: check it now
+    if args.legacy_einverted or args.t != 37:
+        require_einverted()
+        print(f"Using einverted binary: {einverted_bin}")
+        if verify_gu_wobble_support():
+            print("✓ G-U wobble pairing support verified")
         
     # Try to open the file to ensure it's a valid FASTA
     try:
