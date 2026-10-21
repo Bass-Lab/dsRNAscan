@@ -274,6 +274,54 @@ fn strand_window_hits(enc: &[u8], minus: bool, p: &Params, step: usize) -> Vec<H
     hits
 }
 
+/// Both strands like `dsrnas_both`, but handing each strand's dsRNAs to `emit` `chunk` nt at a time
+/// (plus strand first, by i_start), so only one stretch of folded results is held at once. Same
+/// dsRNAs in the same order as `dsrnas_both`.
+pub fn dsrnas_both_stream(enc: &[u8], p: &Params, chunk: usize, emit: &mut dyn FnMut(char, Vec<Dsrna>)) {
+    let comp = complement(enc);
+    let Some(step) = p.window_step else {
+        emit('+', dsrnas(enc, false, p));
+        emit('-', dsrnas(&comp, true, p));
+        return;
+    };
+    let (hp, hm) = if p.windows.len() > 1 || p.minus_revcomp || p.grid.is_some() {
+        (strand_window_hits(enc, false, p, step), strand_window_hits(&comp, true, p, step))
+    } else {
+        let [a, b] = einverted::window_hits_both(enc, &single_run(p, window_list(p)[0]), step);
+        (a, b)
+    };
+    finish_windows_chunked(enc, hp, false, p, chunk, &mut |v| emit('+', v));
+    finish_windows_chunked(&comp, hm, true, p, chunk, &mut |v| emit('-', v));
+}
+
+/// `finish_windows` one stretch of `chunk` nt (by i_start) at a time. Nested elimination still sees
+/// every container: a container starts no later than the dsRNA it contains and ends at or after its
+/// i arm, so the containers from earlier stretches are among the kept hits that reach this stretch.
+fn finish_windows_chunked(enc: &[u8], mut hits: Vec<Hit>, minus: bool, p: &Params, chunk: usize, emit: &mut dyn FnMut(Vec<Dsrna>)) {
+    hits.sort_by_key(|h| h.i_start); // stable, as nested_05x's sort
+    let chunk = chunk.max(1);
+    let mut tail: Vec<Hit> = Vec::new(); // folded hits of earlier stretches that may still contain later ones
+    let mut k = 0;
+    while k < hits.len() {
+        let lo = hits[k].i_start / chunk * chunk;
+        let hi = lo.saturating_add(chunk);
+        let end = k + hits[k..].partition_point(|h| h.i_start < hi);
+        let folded: Vec<Dsrna> = par_map(&hits[k..end], |h| fold(enc, h, minus, p)).into_iter().flatten().collect();
+        let mut out = if p.overlap_frac.is_some() {
+            tail.retain(|t| t.i_end >= lo);
+            let all: Vec<&Hit> = tail.iter().chain(folded.iter().map(|d| &d.hit)).collect();
+            let nested = select::nested_flags(&all)[tail.len()..].to_vec();
+            tail.extend(folded.iter().map(|d| d.hit.clone()));
+            folded.into_iter().zip(nested).filter(|(_, x)| !x).map(|(d, _)| d).collect()
+        } else {
+            folded
+        };
+        out.sort_by_key(|d| (d.hit.i_start, d.hit.j_end, d.hit.i_end, d.hit.j_start));
+        emit(out);
+        k = end;
+    }
+}
+
 /// 0.5.x after the windows: match pre-filter + fold + filters, then nested elimination.
 fn finish_windows(enc: &[u8], hits: Vec<Hit>, minus: bool, p: &Params) -> Vec<Dsrna> {
     let folded: Vec<Dsrna> = par_map(&hits, |h| fold(enc, h, minus, p)).into_iter().flatten().collect();

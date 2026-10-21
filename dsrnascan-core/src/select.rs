@@ -99,23 +99,32 @@ pub fn nested_05x(mut ds: Vec<Dsrna>) -> Vec<Dsrna> {
         return ds;
     }
     ds.sort_by_key(|d| d.hit.i_start);
-    let starts: Vec<usize> = ds.iter().map(|d| d.hit.i_start).collect();
-    let max_arm = ds.iter().map(|d| d.hit.i_end - d.hit.i_start).max().unwrap();
-    let nested: Vec<bool> = (0..ds.len())
+    let nested = nested_flags(&ds.iter().map(|d| &d.hit).collect::<Vec<_>>());
+    ds.into_iter().zip(nested).filter(|(_, x)| !x).map(|(d, _)| d).collect()
+}
+
+/// For hits sorted by i_start: which are nested in another (both arms inside one hit's arms).
+/// Identical hits: the first is kept.
+pub fn nested_flags(hits: &[&Hit]) -> Vec<bool> {
+    if hits.len() <= 1 {
+        return vec![false; hits.len()];
+    }
+    let starts: Vec<usize> = hits.iter().map(|h| h.i_start).collect();
+    let max_arm = hits.iter().map(|h| h.i_end - h.i_start).max().unwrap();
+    (0..hits.len())
         .map(|k| {
-            let h = &ds[k].hit;
+            let h = hits[k];
             // a container starts within max_arm before h and no later than h
             let lo = starts.partition_point(|&s| s < h.i_start.saturating_sub(max_arm));
             let hi = starts.partition_point(|&s| s <= h.i_start);
             (lo..hi).any(|c| {
-                let y = &ds[c].hit;
+                let y = hits[c];
                 let contains = y.i_end >= h.i_end && y.j_start <= h.j_start && y.j_end >= h.j_end;
                 let identical = (y.i_start, y.i_end, y.j_start, y.j_end) == (h.i_start, h.i_end, h.j_start, h.j_end);
                 c != k && contains && !(identical && c > k)
             })
         })
-        .collect();
-    ds.into_iter().zip(nested).filter(|(_, x)| !x).map(|(d, _)| d).collect()
+        .collect()
 }
 
 /// Selection without filters.

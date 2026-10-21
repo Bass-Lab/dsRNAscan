@@ -2,6 +2,12 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.1] - 2026-10-21
+
+- Results are scored and written as the scan goes, a 5 Mb stretch at a time, so memory no longer grows
+  with genome size (output unchanged).
+- The log's `v1` line says whether the run used the v1 settings.
+
 ## [0.7.0] - 2026-10-19
 
 - The settings used for the human dsRNAome resource (`--v1`) are now on by default: windows of 10000 and

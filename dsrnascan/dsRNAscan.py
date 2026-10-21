@@ -4,15 +4,18 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.7.0'
+__version__ = '0.7.1'
 __author__ = 'Bass Lab'
 
 import argparse
 import gzip
+import itertools
 import logging
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import types
 
@@ -35,7 +38,7 @@ def default_cpus():
     return available_cpus() if in_job else min(4, available_cpus())
 
 
-BATCH_BP = 5_000_000  # scan_with_core reports progress after each batch of at least this many bp
+BATCH_BP = 5_000_000  # sequences are scanned, scored and written in batches of at least this many bp
 
 
 # extra= for log lines that go to dsrnascan.log only, not the console
@@ -143,14 +146,15 @@ def fai_record(filename, name):
     return types.SimpleNamespace(id=name, seq=seq)
 
 
-def _ids(df):
-    return "dsRNA_" + df["Chromosome"].astype(str) + "_" + pd.Series(range(1, len(df) + 1), index=df.index).astype(str).str.zfill(6)
+def _ids(df, first):
+    n = pd.Series(range(first, first + len(df)), index=df.index).astype(str).str.zfill(6)
+    return "dsRNA_" + df["Chromosome"].astype(str) + "_" + n
 
 
-def write_gff3(df, output_file):
+def gff3_lines(df, first):
     """GFF3 with mRNA/exon types, so IGV draws the two arms as one linked feature with the loop as
-    an intron."""
-    ids, c, st = _ids(df), df["Chromosome"].astype(str), df["Strand"].astype(str)
+    an intron. `first` numbers the dsRNAs across batches."""
+    ids, c, st = _ids(df, first), df["Chromosome"].astype(str), df["Strand"].astype(str)
     i0, i1, j0, j1 = (df[k].astype(int) for k in ("i_start", "i_end", "j_start", "j_end"))
     score = df["Score"].astype(str) if "Score" in df.columns else "."
     attrs = ("ID=" + ids + ";Name=" + ids + ";dG=" + df["dG(kcal/mol)"].astype(str)
@@ -159,22 +163,27 @@ def write_gff3(df, output_file):
               + "\t" + score + "\t" + st + "\t.\t" + attrs)
     arm = lambda a, b, name: (c + "\tdsRNAscan\texon\t" + a.astype(str) + "\t" + b.astype(str) + "\t.\t" + st
                               + "\t.\tParent=" + ids + ";Name=" + name)
-    lines = np.column_stack([parent, arm(i0, i1, "i_arm"), arm(j0, j1, "j_arm")]).ravel()
-    with open(output_file, "w") as f:
-        f.write(f"##gff-version 3\n##source dsRNAscan v{__version__}\n")
-        f.write("".join(l + "\n" for l in lines))
+    return "".join(l + "\n" for l in np.column_stack([parent, arm(i0, i1, "i_arm"), arm(j0, j1, "j_arm")]).ravel())
 
 
-def write_bedpe(df, output_file):
+def bedpe_lines(df, first):
     """BEDPE: one line per dsRNA with both arms (0-based starts); details are in *.dsrnas.txt."""
     c, st = df["Chromosome"].astype(str), df["Strand"].astype(str)
     score = df["Score"].astype(str) if "Score" in df.columns else "."
     lines = (c + "\t" + (df["i_start"].astype(int) - 1).astype(str) + "\t" + df["i_end"].astype(int).astype(str) + "\t"
              + c + "\t" + (df["j_start"].astype(int) - 1).astype(str) + "\t" + df["j_end"].astype(int).astype(str) + "\t"
-             + _ids(df) + "\t" + score + "\t" + st + "\t" + st)
-    with open(output_file, "w") as f:
-        f.write("#chrom1\tstart1\tend1\tchrom2\tstart2\tend2\tname\tscore\tstrand1\tstrand2\n")
-        f.write("".join(l + "\n" for l in lines))
+             + _ids(df, first) + "\t" + score + "\t" + st + "\t" + st)
+    return "".join(l + "\n" for l in lines)
+
+
+def bp_lines(d, strand):
+    """IGV .bp arcs for one strand, coloured by percent paired (header colours 0-2 plus, 3-5 minus)."""
+    pp = d["percent_paired"].astype(float)
+    color = (pp >= 80).astype(int) + (pp >= 90).astype(int) + (3 if strand == "-" else 0)
+    lines = (d["Chromosome"].astype(str) + "\t" + d["i_start"].astype(int).astype(str) + "\t"
+             + d["i_end"].astype(int).astype(str) + "\t" + d["j_start"].astype(int).astype(str) + "\t"
+             + d["j_end"].astype(int).astype(str) + "\t" + color.astype(str))
+    return "".join(l + "\n" for l in lines)
 
 
 BP_HEADER = ("color:\t100\t149\t237\t70-80% paired (forward strand)\n"
@@ -183,22 +192,47 @@ BP_HEADER = ("color:\t100\t149\t237\t70-80% paired (forward strand)\n"
              "color:\t205\t92\t92\t70-80% paired (reverse strand)\n"
              "color:\t178\t34\t34\t80-90% paired (reverse strand)\n"
              "color:\t139\t0\t0\t90-100% paired (reverse strand)\n")
+BEDPE_HEADER = "#chrom1\tstart1\tend1\tchrom2\tstart2\tend2\tname\tscore\tstrand1\tstrand2\n"
 
 
-def write_bp(df, output_file, strand):
-    """IGV .bp arcs for one strand, coloured by percent paired (header colours 0-2 plus, 3-5 minus)."""
-    d = df[df["Strand"] == strand]
-    if d.empty:
-        return False
-    pp = d["percent_paired"].astype(float)
-    color = (pp >= 80).astype(int) + (pp >= 90).astype(int) + (3 if strand == "-" else 0)
-    lines = (d["Chromosome"].astype(str) + "\t" + d["i_start"].astype(int).astype(str) + "\t"
-             + d["i_end"].astype(int).astype(str) + "\t" + d["j_start"].astype(int).astype(str) + "\t"
-             + d["j_end"].astype(int).astype(str) + "\t" + color.astype(str))
-    with open(output_file, "w") as f:
-        f.write(BP_HEADER)
-        f.write("".join(l + "\n" for l in lines))
-    return True
+class OutputFiles:
+    """*.dsrnas.txt plus the .bp/.bedpe/.gff3 tracks, appended batch by batch so results are never
+    all held in memory. A track file is created when its first row arrives."""
+
+    def __init__(self, output_file, fmt):
+        self.txt, self.base, self.fmt = output_file, output_file[:-len('.txt')], fmt
+        self.n, self.handles, self.txt_handle = 0, {}, None
+
+    def _handle(self, sfx, header):
+        if sfx not in self.handles:
+            self.handles[sfx] = open(self.base + sfx, "w")
+            self.handles[sfx].write(header)
+        return self.handles[sfx]
+
+    def write(self, out):
+        if self.txt_handle is None:
+            self.txt_handle = open(self.txt, "w")
+            out.to_csv(self.txt_handle, sep="\t", index=False)
+        else:
+            out.to_csv(self.txt_handle, sep="\t", index=False, header=False)
+        if out.empty:
+            return
+        first = self.n + 1
+        for sfx, strand in ((".forward.bp", "+"), (".reverse.bp", "-")):
+            d = out[out["Strand"] == strand]
+            if not d.empty:
+                self._handle(sfx, BP_HEADER).write(bp_lines(d, strand))
+        if self.fmt in ("bedpe", "both"):
+            self._handle(".bedpe", BEDPE_HEADER).write(bedpe_lines(out, first))
+        if self.fmt in ("gff3", "both"):
+            self._handle(".gff3", f"##gff-version 3\n##source dsRNAscan v{__version__}\n").write(gff3_lines(out, first))
+        self.n += len(out)
+
+    def close(self):
+        """Close everything; returns the track suffixes written, in a fixed order."""
+        for h in list(self.handles.values()) + ([self.txt_handle] if self.txt_handle else []):
+            h.close()
+        return [s for s in (".forward.bp", ".reverse.bp", ".bedpe", ".gff3") if s in self.handles]
 
 
 def count_base_pairs(structure):
@@ -210,77 +244,151 @@ def count_base_pairs(structure):
     return structure.count('(')
 
 
-def scan_with_core(args):
-    """Scan with the compiled engine (dsrnascan._core, built from dsrnascan-core/), applying
-    --only_seq/--start/--end; returns one row per dsRNA."""
-    from dsrnascan import _core as dsrnascan_core
-    logger = logging.getLogger(__name__)
-    records, lengths = [], []
+def scanned_length(args, length):
+    """bp of a sequence of `length` that --start/--end leave to scan."""
+    if args.start > 0 or args.end > 0:
+        a, b = max(0, args.start - 1), (args.end if args.end > 0 else length)
+        return max(0, min(b, length) - a)
+    return length
+
+
+def sequence_lengths(args):
+    """[(name, length)] of the sequences to scan, in file order, from the .fai or a quick pass over
+    the file (headers and line lengths only), so progress can be reported while reading lazily."""
+    index = read_fai(args.filename)
+    if index is not None:
+        lens = [(name, v[0]) for name, v in index.items()]
+    else:
+        lens, name, n = [], None, 0
+        with smart_open(args.filename) as f:
+            for line in f:
+                if line.startswith(">"):
+                    if name is not None:
+                        lens.append((name, n))
+                    name, n = (line[1:].split(None, 1) or [""])[0], 0
+                elif name is not None:
+                    n += len(line.strip())
+        if name is not None:
+            lens.append((name, n))
+    if args.only_seq:
+        lens = [x for x in lens if x[0] == args.only_seq]
+    return lens
+
+
+def iter_records(args):
+    """(name, offset, sequence bytes, full length) one sequence at a time, with --only_seq/--start/--end
+    applied; offset is where the scanned part starts in the full sequence."""
     indexed = fai_record(args.filename, args.only_seq) if args.only_seq else None
     with smart_open(args.filename) as handle:
         for record in ([indexed] if indexed else SeqIO.parse(handle, "fasta")):
             if args.only_seq and record.id != args.only_seq:
                 continue
             seq = str(record.seq).upper()
-            lengths.append(len(seq))  # lets --minus-revcomp regions use the whole-chromosome window grid
-            offset = 0
+            full, offset = len(seq), 0
             if args.start > 0 or args.end > 0:
                 offset = max(0, args.start - 1)
                 seq = seq[offset:args.end if args.end > 0 else len(seq)]
-            records.append((record.id, offset, seq.encode()))
-    if not records:
+            yield record.id, offset, seq.encode(), full
+
+
+ENGINE_COLUMNS = {'Chromosome': 'chromosome', 'Strand': 'strand', 'Score': 'score', 'RawMatch': 'raw_match',
+                  'PercMatch': 'match_perc', 'Gaps': 'gap_numb', 'dG(kcal/mol)': 'energy'}
+
+
+def scan_batches(args, handle):
+    """Scan with the compiled engine (dsrnascan._core, built from dsrnascan-core/), reading the FASTA
+    lazily, and pass each piece of results to `handle(DataFrame)` in output order: a sequence of at
+    least BATCH_BP is streamed a stretch of BATCH_BP at a time; smaller ones are scanned together."""
+    from dsrnascan import _core as dsrnascan_core
+    logger = logging.getLogger(__name__)
+    lens = sequence_lengths(args)
+    if not lens:
         sys.exit(f"No sequence named '{args.only_seq}' in {args.filename}" if args.only_seq
                  else f"No sequences in {args.filename}")
-    if not any(r[2] for r in records):
+    sizes = [scanned_length(args, n) for _, n in lens]
+    total = sum(sizes)
+    if total == 0:
         sys.exit(f"Nothing to scan: --start {args.start} is past the end of the sequence" if args.start
                  else f"Nothing to scan: the sequences in {args.filename} are empty")
     strands = 'plus' if args.forward_only else 'minus' if args.reverse_only else 'both'
-    pp = args.percent_paired_cutoff if args.percent_paired_cutoff is not None else args.paired_cutoff
-    total = sum(len(r[2]) for r in records)
-    logger.info(f"Scanning {len(records):,} sequence{'s' if len(records) > 1 else ''} ({fmt_bp(total)}), "
+    logger.info(f"Scanning {len(lens):,} sequence{'s' if len(lens) > 1 else ''} ({fmt_bp(total)}), "
                 f"{'both strands' if strands == 'both' else strands + ' strand'}, {args.cpus} CPUs")
-    # Records are scanned in batches of at least BATCH_BP so progress can be reported; each record
-    # is scanned on its own either way, so batching does not change the results.
-    batches, cur, cur_bp = [], [], 0
-    for k, r in enumerate(records):
-        cur.append(k)
-        cur_bp += len(r[2])
+    # Batches of at least BATCH_BP: one large sequence, or several small ones scanned together.
+    # Each sequence is scanned on its own either way, so batching does not change the results.
+    plan, cur, cur_bp = [], 0, 0
+    for bp in sizes:
+        cur, cur_bp = cur + 1, cur_bp + bp
         if cur_bp >= BATCH_BP:
-            batches.append(cur)
-            cur, cur_bp = [], 0
+            plan.append(cur)
+            cur, cur_bp = 0, 0
     if cur:
-        batches.append(cur)
-    t0, done, parts = time.time(), 0, []
-    for b in batches:
-        tb = time.time()
+        plan.append(cur)
+
+    found = 0
+
+    def piece(cols):
+        nonlocal found
+        df = pd.DataFrame(cols).rename(columns=ENGINE_COLUMNS)
+        found += len(df)
+        handle(df)
+
+    def run(batch, stream):
         cols = dsrnascan_core.scan(
-            [records[i] for i in b], strands=strands, threads=args.cpus, window=args.w,
+            [r[:3] for r in batch], strands=strands, threads=args.cpus, window=args.w,
             max_span=min(args.w, args.max_span), step=args.step, threshold=args.score,
             match_score=args.match, mismatch=args.mismatch, gap=args.gaps,
-            min_match_perc=args.paired_cutoff, min_percent_paired=pp, min_bp=args.min_bp,
-            eliminate_nested=not args.no_eliminate_nested, banded=args.banded,
-            windows=args.windows, minus_revcomp=args.minus_revcomp, lengths=[lengths[i] for i in b],
-            temperature=args.t)
-        parts.append(pd.DataFrame(cols))
-        bp = sum(len(records[i][2]) for i in b)
+            min_match_perc=args.paired_cutoff, min_percent_paired=args.percent_paired_cutoff,
+            min_bp=args.min_bp, eliminate_nested=not args.no_eliminate_nested, banded=args.banded,
+            windows=args.windows, minus_revcomp=args.minus_revcomp, lengths=[r[3] for r in batch],
+            temperature=args.t, on_rows=piece if stream else None, chunk_bp=BATCH_BP)
+        if not stream:
+            piece(cols)
+
+    t0, done = time.time(), 0
+    records = iter_records(args)
+    for k, size in enumerate(plan):
+        # the last batch takes whatever is left, in case the quick length pass and the parser differ
+        batch = list(records) if k == len(plan) - 1 else list(itertools.islice(records, size))
+        if not batch:
+            break
+        tb, before = time.time(), found
+        run(batch, stream=len(batch) == 1 and len(batch[0][2]) >= BATCH_BP)
+        bp = sum(len(r[2]) for r in batch)
         done += bp
-        if len(batches) > 1:
-            name = records[b[0]][0] if len(b) == 1 else f"{records[b[0]][0]} .. {records[b[-1]][0]} ({len(b):,} sequences)"
+        if len(plan) > 1:
+            name = batch[0][0] if len(batch) == 1 else f"{batch[0][0]} .. {batch[-1][0]} ({len(batch):,} sequences)"
             elapsed = time.time() - t0
             left = f", ~{fmt_duration(elapsed / done * (total - done))} left" if done < total else ""
-            logger.info(f"  {name}: {fmt_bp(bp)}, {len(parts[-1]):,} dsRNAs in {fmt_duration(time.time() - tb)} "
+            logger.info(f"  {name}: {fmt_bp(bp)}, {found - before:,} dsRNAs in {fmt_duration(time.time() - tb)} "
                         f"({done / total:.0%} done{left})")
-    results = pd.concat(parts, ignore_index=True).rename(columns={
-        'Chromosome': 'chromosome', 'Strand': 'strand', 'Score': 'score', 'RawMatch': 'raw_match',
-        'PercMatch': 'match_perc', 'Gaps': 'gap_numb', 'dG(kcal/mol)': 'energy'})
-    logger.info(f"Scan done: {len(results):,} dsRNAs in {fmt_duration(time.time() - t0)} "
+        del batch
+    logger.info(f"Scan done: {found:,} dsRNAs in {fmt_duration(time.time() - t0)} "
                 f"(compiled engine {dsrnascan_core.__version__}{', banded fold' if args.banded else ''})")
-    return results
+
+
+def output_table(results, stem):
+    """dsRNAscan's output columns for one batch of engine results (sequences and structure last)."""
+    n = len(results)
+
+    def col(name, default):
+        return results[name] if name in results.columns else pd.Series([default] * n, index=results.index, dtype=object)
+    structure = col('structure', '')
+    out = pd.DataFrame({
+        'Chromosome': col('chromosome', stem), 'Strand': col('strand', '+'),
+        'i_start': col('i_start', 0).astype(int), 'i_end': col('i_end', 0).astype(int),
+        'j_start': col('j_start', 0).astype(int), 'j_end': col('j_end', 0).astype(int),
+        'Score': col('score', 0), 'RawMatch': col('raw_match', '0/0'), 'PercMatch': col('match_perc', 0),
+        'Gaps': col('gap_numb', 0), 'dG(kcal/mol)': col('energy', 0.0),
+        'base_pairs': results['base_pairs'] if 'base_pairs' in results.columns else structure.map(count_base_pairs),
+        'percent_paired': col('percent_paired', 0), 'longest_helix': col('longest_helix', 0),
+        'eff_i_start': col('eff_i_start', 0).astype(int), 'eff_i_end': col('eff_i_end', 0).astype(int),
+        'eff_j_start': col('eff_j_start', 0).astype(int), 'eff_j_end': col('eff_j_end', 0).astype(int),
+    })
+    return out, (col('i_seq', ''), col('j_seq', ''), structure)
 
 
 def run_scan(args):
-    """Scan, score and write the outputs."""
-    import logging
+    """Scan, score and write the outputs, one batch at a time."""
     logger = logging.getLogger(__name__)
     t_start = time.time()
     stem = output_stem(args)
@@ -306,7 +414,6 @@ def run_scan(args):
     console_handler.setFormatter(logging.Formatter('%(message)s'))
     console_handler.addFilter(lambda record: not getattr(record, 'log_only', False))
     root_logger.addHandler(console_handler)
-    logger = logging.getLogger(__name__)
 
     logger.info(f"dsRNAscan {__version__}: {args.filename} -> {output_dir}/ (settings in dsrnascan.log)")
     logger.info(f"Command: {' '.join(sys.argv)}", extra=LOG_ONLY)
@@ -320,50 +427,71 @@ def run_scan(args):
     changed = changed_from_defaults(args)
     if changed:
         logger.info(f"Changed from the default settings: {'; '.join(changed)}")
-    
-    results = scan_with_core(args)
 
-    output_file = os.path.join(output_dir, f"{stem}.dsrnas.txt")
-    n = len(results)
-
-    # One row per dsRNA; the sequences and structure always come last
-    def col(name, default):
-        return results[name] if name in results.columns else pd.Series([default] * n, index=results.index, dtype=object)
-    structure = col('structure', '')
-    out = pd.DataFrame({
-        'Chromosome': col('chromosome', stem), 'Strand': col('strand', '+'),
-        'i_start': col('i_start', 0).astype(int), 'i_end': col('i_end', 0).astype(int),
-        'j_start': col('j_start', 0).astype(int), 'j_end': col('j_end', 0).astype(int),
-        'Score': col('score', 0), 'RawMatch': col('raw_match', '0/0'), 'PercMatch': col('match_perc', 0),
-        'Gaps': col('gap_numb', 0), 'dG(kcal/mol)': col('energy', 0.0),
-        'base_pairs': results['base_pairs'] if 'base_pairs' in results.columns else structure.map(count_base_pairs),
-        'percent_paired': col('percent_paired', 0), 'longest_helix': col('longest_helix', 0),
-        'eff_i_start': col('eff_i_start', 0).astype(int), 'eff_i_end': col('eff_i_end', 0).astype(int),
-        'eff_j_start': col('eff_j_start', 0).astype(int), 'eff_j_end': col('eff_j_end', 0).astype(int),
-    })
-    if n and not args.no_ml:
+    status = None
+    if not args.no_ml:
         from dsrnascan.ml_scoring import score_results, check_ml_dependencies
         status = check_ml_dependencies()
-        if status['stability'] or status['probing']:
-            logger.info("ML scores:")
-            out = score_results(out, threads=args.cpus)
-        if status['missing']:
-            logger.info(f"  Install {', '.join(status['missing'])} for ML scores")
-    out['i_seq'], out['j_seq'], out['structure'] = col('i_seq', ''), col('j_seq', ''), structure
-    out.to_csv(output_file, sep='\t', index=False)
+    use_ml = bool(status and (status['stability'] or status['probing']))
+    files = OutputFiles(os.path.join(output_dir, f"{stem}.dsrnas.txt"), args.format)
+    counts = {'n': 0}
 
-    extra = []  # suffixes written next to <stem>.dsrnas.txt
-    if n:
-        base = output_file[:-len('.txt')]
-        extra += [sfx for sfx, strand in ((".forward.bp", "+"), (".reverse.bp", "-"))
-                  if write_bp(out, base + sfx, strand)]
-        if args.format in ('bedpe', 'both'):
-            write_bedpe(out, f"{base}.bedpe")
-            extra.append(".bedpe")
-        if args.format in ('gff3', 'both'):
-            write_gff3(out, f"{base}.gff3")
-            extra.append(".gff3")
+    def process(results):
+        """Score and write one piece of results (runs on the writer thread)."""
+        out, (i_seq, j_seq, structure) = output_table(results, stem)
+        if out.empty:
+            return
+        if use_ml:
+            out = score_results(out, threads=args.cpus, log=False)
+            for c in ('likely_edited', 'likely_forms'):
+                if c in out.columns:
+                    counts[c] = counts.get(c, 0) + int((out[c] == 'Yes').sum())
+        out['i_seq'], out['j_seq'], out['structure'] = i_seq, j_seq, structure
+        files.write(out)
+        counts['n'] += len(out)
 
+    # The engine hands over results while it keeps scanning; one thread scores and writes them.
+    # At most two pieces wait in the queue, so memory stays bounded if writing falls behind.
+    pieces, failed = queue.Queue(maxsize=2), []
+
+    def writer():
+        while (results := pieces.get()) is not None:
+            if not failed:
+                try:
+                    process(results)
+                except BaseException as e:  # reported after the scan stops
+                    failed.append(e)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+
+    def handle(results):
+        if failed:
+            raise failed[0]
+        pieces.put(results)
+
+    try:
+        scan_batches(args, handle)
+    finally:
+        pieces.put(None)
+        thread.join()
+    if failed:
+        raise failed[0]
+    n = counts['n']
+    if files.txt_handle is None:  # no dsRNAs: write the header so the file still opens
+        empty, seqs = output_table(pd.DataFrame(), stem)
+        empty['i_seq'], empty['j_seq'], empty['structure'] = seqs
+        files.write(empty)
+    extra = files.close()
+
+    if n and use_ml:
+        logger.info("ML scores:")
+        if 'likely_edited' in counts:
+            logger.info(f"  likely_edited (stability model): {counts['likely_edited']:,} of {n:,} ({counts['likely_edited']/n*100:.1f}%)")
+        if 'likely_forms' in counts:
+            logger.info(f"  likely_forms (probing model): {counts['likely_forms']:,} of {n:,} ({counts['likely_forms']/n*100:.1f}%)")
+    if n and status and status['missing']:
+        logger.info(f"  Install {', '.join(status['missing'])} for ML scores")
     logger.info(f"Wrote {stem}.dsrnas.txt" + (f" (+ {', '.join(extra)})" if extra else "") + f" in {output_dir}/")
     logger.info(resource_summary(t_start, args.cpus))
     if n:
@@ -516,6 +644,7 @@ def main():
     except Exception as e:
         parser.error(f"Error reading input file '{args.filename}': {str(e)}")
     
+    args.v1 = not changed_from_defaults(args)  # logged: True when the run uses the v1 settings
     run_scan(args)
 
 

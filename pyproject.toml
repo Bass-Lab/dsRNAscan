@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dsrnascan"
-version = "0.7.0"
+version = "0.7.1"
 description = "A tool for genome-wide prediction of double-stranded RNA structures"
 readme = "README.md"
 authors = [

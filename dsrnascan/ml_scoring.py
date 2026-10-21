@@ -10,6 +10,7 @@ Scores predicted dsRNA structures using pre-trained machine learning models:
 Models are bundled with the package and loaded on demand.
 """
 
+import functools
 import os
 import logging
 import numpy as np
@@ -133,16 +134,23 @@ def score_stability(features_df, threads=None):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Stability model not found at {model_path}")
 
+    model = _stability_model(model_path)
+    try:
+        scores = model.predict(features_df, num_threads=threads)
+    except TypeError:  # older ydf
+        scores = model.predict(features_df)
+    return scores
+
+
+@functools.lru_cache(maxsize=None)
+def _stability_model(model_path):
+    """Loaded once per run (results are scored batch by batch)."""
+    import ydf
     previous = ydf.verbose(0)  # no "Loading model" lines on the console
     try:
-        model = ydf.load_model(model_path)
-        try:
-            scores = model.predict(features_df, num_threads=threads)
-        except TypeError:  # older ydf
-            scores = model.predict(features_df)
+        return ydf.load_model(model_path)
     finally:
         ydf.verbose(previous)
-    return scores
 
 
 def score_probing(features_df, threads=None):
@@ -168,12 +176,7 @@ def score_probing(features_df, threads=None):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Probing model not found at {model_path}")
 
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=UserWarning, message='.*InconsistentVersionWarning.*')
-        warnings.filterwarnings('ignore', message='.*Trying to unpickle.*')
-        model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
+    model, scaler = _probing_model(model_path, scaler_path)
 
     # Scaler expects features in order: length, percent_paired, loop_length, bp_count, er_energy
     probing_features = features_df[['length', 'percent_paired', 'loop_length', 'bp_count', 'er_energy']].copy()
@@ -183,7 +186,18 @@ def score_probing(features_df, threads=None):
     return scores
 
 
-def score_results(results_df, models=None, threads=None):
+@functools.lru_cache(maxsize=None)
+def _probing_model(model_path, scaler_path):
+    """Loaded once per run (results are scored batch by batch)."""
+    import joblib
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=UserWarning, message='.*InconsistentVersionWarning.*')
+        warnings.filterwarnings('ignore', message='.*Trying to unpickle.*')
+        return joblib.load(model_path), joblib.load(scaler_path)
+
+
+def score_results(results_df, models=None, threads=None, log=True):
     """Score dsRNAscan results with available ML models.
 
     Parameters
@@ -227,7 +241,8 @@ def score_results(results_df, models=None, threads=None):
                 results_df['stability_model_score'] = np.round(scores, 3)
                 results_df['likely_edited'] = np.where(scores >= STABILITY_YOUDEN_THRESHOLD, 'Yes', 'No')
                 n_high = (results_df['likely_edited'] == 'Yes').sum()
-                logger.info(f"  likely_edited (stability model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
+                if log:
+                    logger.info(f"  likely_edited (stability model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
             except Exception as e:
                 logger.error(f"Stability model scoring failed: {e}")
 
@@ -243,7 +258,8 @@ def score_results(results_df, models=None, threads=None):
                 results_df['probing_model_score'] = np.round(scores, 3)
                 results_df['likely_forms'] = np.where(raw >= PROBING_YOUDEN_THRESHOLD_RAW, 'Yes', 'No')
                 n_high = (results_df['likely_forms'] == 'Yes').sum()
-                logger.info(f"  likely_forms (probing model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
+                if log:
+                    logger.info(f"  likely_forms (probing model): {n_high:,} of {n:,} ({n_high/n*100:.1f}%)")
             except Exception as e:
                 logger.error(f"Probing model scoring failed: {e}")
 
