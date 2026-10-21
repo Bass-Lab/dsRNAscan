@@ -2,6 +2,11 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.2] - 2026-10-21
+
+- Memory no longer grows with chromosome length times thread count: each search task copied the
+  whole chromosome (about 28 GB on a 224 Mb chromosome with 128 threads). Output unchanged.
+
 ## [0.7.1] - 2026-10-21
 
 - Results are scored and written as the scan goes, a 5 Mb stretch at a time, so memory no longer grows

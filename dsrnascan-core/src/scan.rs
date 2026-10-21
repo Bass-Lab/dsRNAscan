@@ -309,8 +309,12 @@ fn sweep_lanes<S: Sink, const L: usize>(
     }
     assert!(p.max_span < MAX_SPAN_LIMIT, "max_span must be < {MAX_SPAN_LIMIT}");
     let n = seq.len();
-    // rev[n - q + k] == seq[q - 1 - k], so each row reads its 5' partners as one forward slice
-    let rev: Vec<u8> = seq.iter().rev().copied().collect();
+    let rows = rows.start.min(n)..rows.end.min(n);
+    // Each row reads its 5' partners as one forward slice of a reversed copy. The copy covers only
+    // these rows and the kk bases before them (one per task in flight, so never the whole sequence):
+    // rev[end - q + k] == seq[q - 1 - k].
+    let (base, end) = (rows.start.saturating_sub(kk), rows.end);
+    let rev: Vec<u8> = seq[base..end].iter().rev().copied().collect();
     let (gap, thr) = (p.gap, p.threshold);
     let (mut prev, mut cur) = (vec![[0i32; L]; kk], vec![[0i32; L]; kk]);
     let (mut pmeta, mut cmeta) = (vec![[0u64; L]; kk], vec![[0u64; L]; kk]);
@@ -322,7 +326,7 @@ fn sweep_lanes<S: Sink, const L: usize>(
             continue;
         }
         let row: [&[i32; 5]; L] = std::array::from_fn(|l| &tables[l][seq[q] as usize]);
-        let partners = &rev[n - q..n - q + kmax];
+        let partners = &rev[end - q..end - q + kmax];
         cur[0] = std::array::from_fn(|l| row[l][partners[0] as usize]);
         cmeta[0] = [COL0_META; L];
         if kmax < 2 {
