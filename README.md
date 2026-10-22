@@ -44,7 +44,8 @@ Run `dsrnascan --help` for all options.
 
 ## Output
 
-- **`*.dsrnas.txt`**: one row per dsRNA with coordinates, search score, duplex fold, structure and ML scores
+- **`*.dsrnas.parquet`**: one row per dsRNA with coordinates, search score, duplex fold, structure and ML scores
+  (`pd.read_parquet` in Python, `arrow::read_parquet` in R; `--txt` writes the same table as tab-separated text)
 - **`*.bedpe`**: paired arm coordinates (default)
 - **`*.gff3`**: arms as linked features for IGV (`--format gff3` or `both`)
 - **`*.bp`**: base-pair arcs for IGV
@@ -52,15 +53,22 @@ Run `dsrnascan --help` for all options.
 ML scores (`likely_edited`, `likely_forms`) come from structure-only models trained on human data, where
 inverted Alus dominate. Treat them as a rough guide, especially outside Alus and in other species. Both scores run 0-1 (cutoffs: stability 0.553, probing 0.440).
 
-## Browse Results
+## Browse, filter and export
 
 ```bash
-# Interactive viewer with Forna RNA structure visualization
-dsrna-browse results_directory/
+# Interactive browser: filters, sorting, structure view, export of the filtered set
+dsrna-browse results_folder/
 
-# With RNA editing site annotations (BED or GFF3)
-dsrna-browse results_directory/ --editing-file editing_sites.bed
+# With RNA editing sites (BED or GFF3), counted per arm and shown on the structure
+dsrna-browse results_folder/ --editing-file editing_sites.bed
+
+# The same filters from the command line
+dsrna-browse results_folder/ --min percent_paired 85 --max "dG(kcal/mol)" -150 --export strong.gff3
+dsrna-browse results_folder/ --region chr19:1-3000000 --likely-edited --export region.tsv
 ```
+
+Export formats: `.tsv`, `.parquet`, `.bedpe`, `.bed`, `.gff3`, `.bp`, `.fa`, `.dbn`. `--columns` lists the filterable
+columns; `--where` takes an SQL condition on them.
 
 ## Citation
 

@@ -71,4 +71,4 @@ jobs:
           pip install dist/*.whl
           dsrnascan --version
           dsrnascan tests/data/chr19_1000001-1100000.fa --no-ml -c 2 --output-dir out
-          test "$(tail -n +2 out/*.dsrnas.txt | wc -l)" -gt 0
+          python -c "import glob, pandas as pd; assert len(pd.read_parquet(glob.glob('out/*.dsrnas.parquet')[0])) > 0"

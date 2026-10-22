@@ -238,6 +238,7 @@ def score_results(results_df, models=None, threads=None, log=True):
             try:
                 scores = score_stability(features_df, threads)
                 results_df = results_df.copy()
+                scores = np.asarray(scores, dtype=np.float64)  # ydf returns float32
                 results_df['stability_model_score'] = np.round(scores, 3)
                 results_df['likely_edited'] = np.where(scores >= STABILITY_YOUDEN_THRESHOLD, 'Yes', 'No')
                 n_high = (results_df['likely_edited'] == 'Yes').sum()
@@ -267,7 +268,7 @@ def score_results(results_df, models=None, threads=None, log=True):
 
 
 def score_results_file(input_path, output_path=None):
-    """Score an existing dsRNAscan results file (*.dsrnas.txt).
+    """Score an existing dsRNAscan results file (*.dsrnas.parquet or *.dsrnas.txt).
 
     Parameters
     ----------
@@ -281,7 +282,8 @@ def score_results_file(input_path, output_path=None):
     pd.DataFrame
         Scored results.
     """
-    df = pd.read_csv(input_path, sep='\t')
+    parquet = str(input_path).endswith('.parquet')
+    df = pd.read_parquet(input_path) if parquet else pd.read_csv(input_path, sep='\t')
     if len(df) == 0:
         logger.info("No predictions to score.")
         return df
@@ -290,5 +292,8 @@ def score_results_file(input_path, output_path=None):
 
     if output_path is None:
         output_path = input_path
-    scored.to_csv(output_path, sep='\t', index=False)
+    if str(output_path).endswith('.parquet'):
+        scored.to_parquet(output_path, compression='zstd', index=False)
+    else:
+        scored.to_csv(output_path, sep='\t', index=False)
     return scored

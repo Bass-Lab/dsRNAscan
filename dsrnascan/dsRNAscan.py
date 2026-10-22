@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.7.2'
+__version__ = '0.7.3'
 __author__ = 'Bass Lab'
 
 import argparse
@@ -195,13 +195,40 @@ BP_HEADER = ("color:\t100\t149\t237\t70-80% paired (forward strand)\n"
 BEDPE_HEADER = "#chrom1\tstart1\tend1\tchrom2\tstart2\tend2\tname\tscore\tstrand1\tstrand2\n"
 
 
-class OutputFiles:
-    """*.dsrnas.txt plus the .bp/.bedpe/.gff3 tracks, appended batch by batch so results are never
-    all held in memory. A track file is created when its first row arrives."""
+# Column types of the results table (pyarrow); anything else is typed from its pandas dtype
+PARQUET_TYPES = {
+    'Chromosome': 'string', 'Strand': 'string', 'i_start': 'int64', 'i_end': 'int64', 'j_start': 'int64',
+    'j_end': 'int64', 'Score': 'int64', 'RawMatch': 'string', 'PercMatch': 'float64', 'Gaps': 'int64',
+    'dG(kcal/mol)': 'float64', 'base_pairs': 'int64', 'percent_paired': 'float64', 'longest_helix': 'int64',
+    'eff_i_start': 'int64', 'eff_i_end': 'int64', 'eff_j_start': 'int64', 'eff_j_end': 'int64',
+    'stability_model_score': 'float64', 'likely_edited': 'string', 'probing_model_score': 'float64',
+    'likely_forms': 'string', 'i_seq': 'string', 'j_seq': 'string', 'structure': 'string',
+}
 
-    def __init__(self, output_file, fmt):
-        self.txt, self.base, self.fmt = output_file, output_file[:-len('.txt')], fmt
-        self.n, self.handles, self.txt_handle = 0, {}, None
+
+def parquet_schema(df):
+    import pyarrow as pa
+    fields = []
+    for c in df.columns:
+        if c in PARQUET_TYPES:
+            t = pa.type_for_alias(PARQUET_TYPES[c])
+        else:
+            try:
+                t = pa.from_numpy_dtype(df[c].dtype)
+            except (pa.ArrowNotImplementedError, TypeError):
+                t = pa.string()
+        fields.append((c, t))
+    return pa.schema(fields)
+
+
+class OutputFiles:
+    """<stem>.dsrnas.parquet (one row group per batch) plus the .bp/.bedpe/.gff3 tracks and, with
+    --txt, the same table as <stem>.dsrnas.txt; all appended batch by batch so results are never all
+    held in memory. A track file is created when its first row arrives."""
+
+    def __init__(self, base, fmt, txt=False):
+        self.base, self.fmt, self.txt = base, fmt, txt
+        self.n, self.handles, self.txt_handle, self.parquet = 0, {}, None, None
 
     def _handle(self, sfx, header):
         if sfx not in self.handles:
@@ -210,11 +237,17 @@ class OutputFiles:
         return self.handles[sfx]
 
     def write(self, out):
-        if self.txt_handle is None:
-            self.txt_handle = open(self.txt, "w")
-            out.to_csv(self.txt_handle, sep="\t", index=False)
-        else:
-            out.to_csv(self.txt_handle, sep="\t", index=False, header=False)
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        if self.parquet is None:
+            self.parquet = pq.ParquetWriter(self.base + ".parquet", parquet_schema(out), compression="zstd")
+        self.parquet.write_table(pa.Table.from_pandas(out, schema=self.parquet.schema, preserve_index=False))
+        if self.txt:
+            if self.txt_handle is None:
+                self.txt_handle = open(self.base + ".txt", "w")
+                out.to_csv(self.txt_handle, sep="\t", index=False)
+            else:
+                out.to_csv(self.txt_handle, sep="\t", index=False, header=False)
         if out.empty:
             return
         first = self.n + 1
@@ -229,10 +262,12 @@ class OutputFiles:
         self.n += len(out)
 
     def close(self):
-        """Close everything; returns the track suffixes written, in a fixed order."""
+        """Close everything; returns the other suffixes written, in a fixed order."""
+        if self.parquet is not None:
+            self.parquet.close()
         for h in list(self.handles.values()) + ([self.txt_handle] if self.txt_handle else []):
             h.close()
-        return [s for s in (".forward.bp", ".reverse.bp", ".bedpe", ".gff3") if s in self.handles]
+        return ([".txt"] if self.txt_handle else []) + [s for s in (".forward.bp", ".reverse.bp", ".bedpe", ".gff3") if s in self.handles]
 
 
 def count_base_pairs(structure):
@@ -433,7 +468,7 @@ def run_scan(args):
         from dsrnascan.ml_scoring import score_results, check_ml_dependencies
         status = check_ml_dependencies()
     use_ml = bool(status and (status['stability'] or status['probing']))
-    files = OutputFiles(os.path.join(output_dir, f"{stem}.dsrnas.txt"), args.format)
+    files = OutputFiles(os.path.join(output_dir, f"{stem}.dsrnas"), args.format, txt=args.txt)
     counts = {'n': 0}
 
     def process(results):
@@ -478,7 +513,7 @@ def run_scan(args):
     if failed:
         raise failed[0]
     n = counts['n']
-    if files.txt_handle is None:  # no dsRNAs: write the header so the file still opens
+    if files.parquet is None:  # no dsRNAs: write the empty table so the file still opens
         empty, seqs = output_table(pd.DataFrame(), stem)
         empty['i_seq'], empty['j_seq'], empty['structure'] = seqs
         files.write(empty)
@@ -492,7 +527,7 @@ def run_scan(args):
             logger.info(f"  likely_forms (probing model): {counts['likely_forms']:,} of {n:,} ({counts['likely_forms']/n*100:.1f}%)")
     if n and status and status['missing']:
         logger.info(f"  Install {', '.join(status['missing'])} for ML scores")
-    logger.info(f"Wrote {stem}.dsrnas.txt" + (f" (+ {', '.join(extra)})" if extra else "") + f" in {output_dir}/")
+    logger.info(f"Wrote {stem}.dsrnas.parquet" + (f" (+ {', '.join(extra)})" if extra else "") + f" in {output_dir}/")
     logger.info(resource_summary(t_start, args.cpus))
     if n:
         logger.info(f"Browse with: dsrna-browse {output_dir}")
@@ -560,6 +595,8 @@ def main():
                         help='Disable ML scoring of predictions (default: scoring enabled if ydf/sklearn installed)')
     parser.add_argument('--format', type=str, default='bedpe', choices=['bedpe', 'gff3', 'both'],
                         help='Output format: bedpe, gff3, or both (default: bedpe)')
+    parser.add_argument('--txt', action='store_true', default=False,
+                        help='Also write the results table as tab-separated text (*.dsrnas.txt)')
 
     args = parser.parse_args()
     

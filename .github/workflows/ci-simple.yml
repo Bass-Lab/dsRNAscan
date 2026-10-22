@@ -31,14 +31,20 @@ jobs:
         python - <<'EOF'
         import glob, pandas as pd
         cols = ['Strand', 'i_start', 'i_end', 'j_start', 'j_end', 'dG(kcal/mol)', 'percent_paired', 'structure']
-        got = pd.read_csv(glob.glob('out/*.dsrnas.txt')[0], sep='\t')[cols]
+        got = pd.read_parquet(glob.glob('out/*.dsrnas.parquet')[0])[cols]
         exp = pd.read_csv('tests/data/chr19_1000001-1100000.expected.tsv', sep='\t')
         a, b = set(map(tuple, got.astype(str).to_numpy())), set(map(tuple, exp.astype(str).to_numpy()))
         print(f'{len(a)} dsRNAs, expected {len(b)}, identical: {a == b}')
         assert a == b
         EOF
 
+    - name: dsrna-browse filters and exports
+      run: |
+        test "$(dsrna-browse out --count)" -eq 348
+        dsrna-browse out --min percent_paired 85 --export strong.gff3
+        dsrna-browse out --export all.bedpe && cmp all.bedpe out/*.dsrnas.bedpe
+
     - name: ML scoring runs
       run: |
         dsrnascan tests/data/chr19_1000001-1100000.fa -c 2 --output-dir out_ml
-        grep -q likely_edited out_ml/*.dsrnas.txt
+        python -c "import glob, pandas as pd; d = pd.read_parquet(glob.glob('out_ml/*.dsrnas.parquet')[0]); assert 'likely_edited' in d.columns and len(d) > 0"

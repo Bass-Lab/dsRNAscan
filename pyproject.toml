@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dsrnascan"
-version = "0.7.2"
+version = "0.7.3"
 description = "A tool for genome-wide prediction of double-stranded RNA structures"
 readme = "README.md"
 authors = [
@@ -31,6 +31,8 @@ dependencies = [
     "biopython>=1.78",
     "numpy>=1.19",
     "pandas>=1.1",
+    "pyarrow>=12",
+    "duckdb>=0.10",
     "ydf>=0.9.0",
     "scikit-learn>=1.0",
 ]

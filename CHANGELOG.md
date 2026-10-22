@@ -2,6 +2,15 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.3] - 2026-10-21
+
+- The results table is now `<input>.dsrnas.parquet` (same columns; about a quarter the size, and
+  columns can be read without the sequences). `--txt` also writes the tab-separated text file.
+- `dsrna-browse` rebuilt as a query tool: filters on every column (ranges, chromosomes, region, strand,
+  ML flags, SQL), sorting, histograms, and export of the filtered set as TSV, Parquet, BEDPE, BED, GFF3,
+  BP, FASTA or dot-bracket; the same filters work on the command line (`--export`, `--count`). Editing
+  sites from a BED/GFF3 are counted per arm. Whole-genome result sets filter in under a second.
+
 ## [0.7.2] - 2026-10-21
 
 - Memory no longer grows with chromosome length times thread count: each search task copied the
