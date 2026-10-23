@@ -70,6 +70,10 @@ dsrna-browse results_folder/ --region chr19:1-3000000 --likely-edited --export r
 Export formats: `.tsv`, `.parquet`, `.bedpe`, `.bed`, `.gff3`, `.bp`, `.fa`, `.dbn`. `--columns` lists the filterable
 columns; `--where` takes an SQL condition on them.
 
+The browser also has analysis tabs on the filtered set (distributions, scatter, dsRNA density along chromosomes,
+group summaries, statistics; charts download as PNG/SVG, their numbers as TSV) and an IGV tab showing the dsRNAs as
+arcs on a hosted assembly (`--genome dm6`, guessed from the results name) or the scan's own FASTA (`--genome genome.fa`).
+
 ## Citation
 
 If you use dsRNAscan, please cite:

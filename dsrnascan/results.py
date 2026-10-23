@@ -291,26 +291,187 @@ class Results:
             'has_editing': self.editing is not None, 'editing_sites': getattr(self, 'n_sites', 0),
         }
 
-    def histogram(self, col, f=None, bins=30, lo=None, hi=None):
-        """Counts per bin over the filtered rows; bin edges from lo/hi (default: the column's full range)."""
+    STAT_COLUMNS = ['percent_paired', 'dG(kcal/mol)', 'base_pairs', 'longest_helix', 'Score', 'i_length', 'j_length',
+                    'loop_length', 'span', 'stability_model_score', 'probing_model_score', 'edits']
+
+    def histogram(self, col, f=None, bins=30, log=False, lo=None, hi=None):
+        """Bin counts over the filtered rows and over all rows with shared edges. The edges span the
+        column's full range, or lo..hi if given (values outside are left out); log-spaced over the
+        positive values if `log`. `n` and `n_all` count every value of each set, for densities."""
         if col not in self.numeric:
             raise ValueError(f"unknown numeric column: {col}")
-        if lo is None or hi is None:
-            lo, hi = self.con.execute(f"SELECT min({q(col)}), max({q(col)}) FROM dsrnas").fetchone()
+        w, p = self.where(f or {})
+        expr, cond, cp = q(col), f"{q(col)} IS NOT NULL", []
+        if log:
+            cond += f" AND {q(col)} > 0"
+            expr = f"log10({q(col)})"
+        n_all, n = self.con.execute(f"SELECT count(*), count(*) FILTER (WHERE {w}) FROM dsrnas WHERE {cond}", p).fetchone()
+        if lo is not None and hi is not None:
+            lo, hi = float(lo), float(hi)
+            cond += f" AND {q(col)} BETWEEN ? AND ?"
+            cp = [lo, hi]
+            if log:
+                lo, hi = (__import__('math').log10(v) if v > 0 else 0.0 for v in (lo, hi))
+        else:
+            lo, hi = self.con.execute(f"SELECT min({expr}), max({expr}) FROM dsrnas WHERE {cond}").fetchone()
             if lo is None:
-                return {'col': col, 'lo': 0, 'hi': 0, 'counts': []}
-        lo, hi = float(lo), float(hi)
+                return {'col': col, 'log': log, 'edges': [], 'counts': [], 'all': [], 'n': n, 'n_all': n_all}
+            lo, hi = float(lo), float(hi)
         if hi <= lo:
             hi = lo + 1
-        w, p = self.where(f or {})
+        bins = max(1, int(bins))
         rows = self.con.execute(
-            f"SELECT CAST(floor(({q(col)} - ?) / ? * ?) AS INTEGER) AS b, count(*) FROM dsrnas "
-            f"WHERE {w} AND {q(col)} IS NOT NULL GROUP BY b",
-            [lo, hi - lo, int(bins)] + p).fetchall()
-        counts = [0] * bins
-        for b, n in rows:
-            counts[min(max(int(b), 0), bins - 1)] += n  # values outside lo..hi fold into the end bins
-        return {'col': col, 'lo': lo, 'hi': hi, 'counts': counts}
+            f"SELECT CAST(floor(({expr} - ?) / ? * ?) AS INTEGER) AS b, count(*), count(*) FILTER (WHERE {w}) "
+            f"FROM dsrnas WHERE {cond} GROUP BY b", [lo, hi - lo, bins] + p + cp).fetchall()  # placeholders in text order
+        counts, every = [0] * bins, [0] * bins
+        for bi, n_bin_all, n_bin in rows:
+            k = min(max(int(bi), 0), bins - 1)
+            every[k] += n_bin_all
+            counts[k] += n_bin
+        edges = [lo + (hi - lo) * k / bins for k in range(bins + 1)]
+        if log:
+            edges = [10 ** e for e in edges]
+        return {'col': col, 'log': log, 'edges': edges, 'counts': counts, 'all': every, 'n': n, 'n_all': n_all}
+
+    def kde(self, col, f=None, log=False, lo=None, hi=None, bandwidth=None, grid=8192, points=2048):
+        """Smoothed density of the filtered rows and of all rows: a fine histogram convolved with a
+        Gaussian kernel. The bandwidth follows Silverman's rule from each set's spread and size unless
+        given (in the column's units, or log10 units on a log axis). Densities are per unit of the
+        axis (log10 units if `log`) and normalized by each set's full size, as the histogram's are.
+        The curve is computed on `grid` bins and returned averaged down to `points`."""
+        h = self.histogram(col, f, grid, log, lo, hi)
+        if not h['edges']:
+            return {'col': col, 'log': log, 'x': [], 'filtered': [], 'all': [], 'n': h['n'], 'n_all': h['n_all'],
+                    'bandwidth': {'filtered': None, 'all': None}}
+        edges = np.log10(h['edges']) if log else np.asarray(h['edges'], dtype=float)
+        step = float(edges[1] - edges[0])
+        centers = (edges[:-1] + edges[1:]) / 2
+        down = max(1, len(centers) // points)
+        shrink = lambda v: v[:len(v) // down * down].reshape(-1, down).mean(axis=1)
+        out = {'col': col, 'log': log, 'x': (10 ** shrink(centers) if log else shrink(centers)).tolist(), 'n': h['n'],
+               'n_all': h['n_all'], 'bandwidth': {}}
+        for key, counts, total in (('filtered', h['counts'], h['n']), ('all', h['all'], h['n_all'])):
+            k = np.asarray(counts, dtype=float)
+            m = k.sum()
+            if m == 0 or total == 0:
+                out[key], out['bandwidth'][key] = [0.0] * (len(centers) // down), None
+                continue
+            if bandwidth:
+                bw = float(bandwidth)
+            else:  # Silverman: 0.9 * min(sd, IQR / 1.34) * n^(-1/5), from the binned values
+                mean = (k * centers).sum() / m
+                sd = float(np.sqrt((k * (centers - mean) ** 2).sum() / m))
+                cum = np.cumsum(k) / m
+                q1, q3 = (float(np.interp(qv, cum, centers)) for qv in (0.25, 0.75))
+                bw = 0.9 * min(sd, (q3 - q1) / 1.34 if q3 > q1 else sd) * m ** (-0.2)
+                bw = max(bw, step)
+            half = int(np.ceil(4 * bw / step))
+            kern = np.exp(-0.5 * (np.arange(-half, half + 1) * step / bw) ** 2)
+            kern /= kern.sum() * step  # the kernel integrates to 1 over the axis
+            out[key] = shrink(np.convolve(k, kern, mode='same') / total).tolist()
+            out['bandwidth'][key] = bw
+        return out
+
+    def scatter(self, x, y, f=None, color=None, max_points=20000, bins=80):
+        """Points (id, x, y[, color]) when the filtered set is small enough, else a 2-D density grid."""
+        for c in (x, y):
+            if c not in self.numeric:
+                raise ValueError(f"unknown numeric column: {c}")
+        w, p = self.where(f or {})
+        cond = f"{w} AND {q(x)} IS NOT NULL AND {q(y)} IS NOT NULL"
+        n = self.con.execute(f"SELECT count(*) FROM dsrnas WHERE {cond}", p).fetchone()[0]
+        if n <= max_points:
+            color = color if color in self.names and color not in (x, y) else None
+            cols = ['id', x, y] + ([color] if color else [])
+            d = self.con.execute(f"SELECT {', '.join(map(q, cols))} FROM dsrnas WHERE {cond}", p).fetch_df()
+            tolist = lambda c: d[c].astype(object).where(d[c].notna(), None).tolist()
+            return {'mode': 'points', 'n': n, 'x': x, 'y': y, 'color': color, 'id': tolist('id'), 'xv': tolist(x),
+                    'yv': tolist(y), 'cv': tolist(color) if color else None}
+        xlo, xhi, ylo, yhi = (float(v) for v in self.con.execute(
+            f"SELECT min({q(x)}), max({q(x)}), min({q(y)}), max({q(y)}) FROM dsrnas WHERE {cond}", p).fetchone())
+        xr, yr = (xhi - xlo) or 1.0, (yhi - ylo) or 1.0
+        rows = self.con.execute(
+            f"SELECT CAST(floor(({q(x)} - ?) / ? * ?) AS INTEGER), CAST(floor(({q(y)} - ?) / ? * ?) AS INTEGER), count(*) "
+            f"FROM dsrnas WHERE {cond} GROUP BY 1, 2", [xlo, xr, bins, ylo, yr, bins] + p).fetchall()
+        z = [[0] * bins for _ in range(bins)]
+        for bx, by, c in rows:
+            z[min(max(int(by), 0), bins - 1)][min(max(int(bx), 0), bins - 1)] += c
+        return {'mode': 'density', 'n': n, 'x': x, 'y': y, 'xedges': [xlo + xr * k / bins for k in range(bins + 1)],
+                'yedges': [ylo + yr * k / bins for k in range(bins + 1)], 'z': z}
+
+    def genome(self, f=None, bin_size=1_000_000, max_chroms=40):
+        """dsRNAs per bin along each chromosome (filtered), chromosomes ordered naturally; the extent of
+        each is the last j_end in the full set."""
+        w, p = self.where(f or {})
+        bin_size = max(1000, int(bin_size))
+        ext = dict(self.con.execute('SELECT "Chromosome", max(j_end) FROM dsrnas GROUP BY 1').fetchall())
+        rows = self.con.execute(
+            f'SELECT "Chromosome", CAST(floor((i_start - 1) / ?) AS INTEGER) AS b, count(*) FROM dsrnas WHERE {w} GROUP BY 1, 2',
+            [bin_size] + p).fetchall()
+        keep = sorted(ext, key=lambda c: -ext[c])[:max_chroms]
+        counts = {c: [0] * (int(ext[c] - 1) // bin_size + 1) for c in keep}
+        for c, b, n in rows:
+            if c in counts:
+                counts[c][min(max(int(b), 0), len(counts[c]) - 1)] += n
+        return {'bin': bin_size, 'omitted': len(ext) - len(keep),
+                'chromosomes': [{'name': c, 'length': int(ext[c]), 'counts': counts[c]} for c in sorted(keep, key=natural_key)]}
+
+    def groups(self, by, f=None):
+        """Summary statistics of the filtered rows per value of a categorical column."""
+        if by not in ('Chromosome', 'Strand', 'likely_edited', 'likely_forms') or by not in self.names:
+            raise ValueError(f"cannot group by {by}")
+        w, p = self.where(f or {})
+        metrics = [('n', 'count(*)'), ('median dG', 'median("dG(kcal/mol)")'), ('median % paired', 'median(percent_paired)'),
+                   ('median longest helix', 'median(longest_helix)'), ('median i length', 'median(i_length)'),
+                   ('median loop length', 'median(loop_length)')]
+        if 'stability_model_score' in self.names:
+            metrics += [('mean stability score', 'avg(stability_model_score)'),
+                        ('% likely edited', "100.0 * avg(CASE WHEN likely_edited = 'Yes' THEN 1 ELSE 0 END)")]
+        if 'probing_model_score' in self.names:
+            metrics += [('mean probing score', 'avg(probing_model_score)'),
+                        ('% likely forms', "100.0 * avg(CASE WHEN likely_forms = 'Yes' THEN 1 ELSE 0 END)")]
+        if 'edits' in self.names:
+            metrics += [('editing sites', 'sum(edits)'), ('% with editing sites', '100.0 * avg(CASE WHEN edits > 0 THEN 1 ELSE 0 END)')]
+        rows = self.con.execute(f"SELECT {q(by)}, {', '.join(e for _, e in metrics)} FROM dsrnas WHERE {w} GROUP BY 1", p).fetchall()
+        rows = sorted(rows, key=lambda r: natural_key(r[0]))
+        clean = lambda v: None if v is None else float(v) if not isinstance(v, str) else v
+        return {'by': by, 'columns': [by] + [m for m, _ in metrics], 'rows': [[clean(v) for v in r] for r in rows]}
+
+    def stats(self, f=None):
+        """n, mean, quartiles, min and max of the main columns, for the filtered rows and for all rows."""
+        cols = [c for c in self.STAT_COLUMNS if c in self.numeric]
+        aggs = ', '.join(f"count({q(c)}), avg({q(c)}), quantile_cont({q(c)}, [0.25, 0.5, 0.75]), min({q(c)}), max({q(c)})" for c in cols)
+        out = {'columns': cols}
+        for key, (w, p) in (('filtered', self.where(f or {})), ('all', ('TRUE', []))):
+            vals = self.con.execute(f"SELECT {aggs} FROM dsrnas WHERE {w}", p).fetchone()
+            out[key] = {}
+            for k, c in enumerate(cols):
+                n, mean, qs, lo, hi = vals[5 * k:5 * k + 5]
+                fl = lambda v: None if v is None else float(v)
+                out[key][c] = {'n': int(n), 'mean': fl(mean), 'q1': fl(qs[0]) if qs else None, 'median': fl(qs[1]) if qs else None,
+                               'q3': fl(qs[2]) if qs else None, 'min': fl(lo), 'max': fl(hi)}
+        return out
+
+    # ------------------------------------------------------------------ genome-browser support
+    def region_rows(self, f, chrom, start, end, strand=None, limit=20000):
+        """Filtered dsRNAs overlapping chrom:start-end (strongest first if more than `limit`)."""
+        w, p = self.where(f or {})
+        cols = ['id', 'Chromosome', 'Strand', 'i_start', 'i_end', 'j_start', 'j_end', 'Score', 'dG(kcal/mol)', 'percent_paired', 'longest_helix']
+        sql = (f'SELECT {", ".join(map(q, cols))} FROM dsrnas WHERE {w} AND "Chromosome" = ? AND i_start <= ? AND j_end >= ?'
+               + (' AND "Strand" = ?' if strand in ('+', '-') else '') + ' ORDER BY "Score" DESC LIMIT ?')
+        return self.con.execute(sql, p + [chrom, int(end), int(start)] + ([strand] if strand in ('+', '-') else []) + [int(limit)]).fetch_df()
+
+    def editing_sites_in(self, chrom, start, end):
+        """[(pos, freq, strand)] of loaded editing sites in chrom:start-end (1-based, inclusive)."""
+        out = []
+        for strand in ('+', '-'):
+            pos, freq = self.editing.get((chrom, strand), (None, None)) if self.editing else (None, None)
+            if pos is None:
+                continue
+            a, b = np.searchsorted(pos, int(start), 'left'), np.searchsorted(pos, int(end), 'right')
+            out += [(int(x), float(y), strand) for x, y in zip(pos[a:b], freq[a:b])]
+        return sorted(out)
+
 
     # ------------------------------------------------------------------ export
     def export(self, path, fmt=None, f=None, sort='id', desc=False, limit=None, batch=100_000):
@@ -398,3 +559,62 @@ class Results:
             return ''.join('>' + ids + ' ' + loc + ' dG=' + S(d['dG(kcal/mol)']) + '\n' + d['i_seq'].astype(str) + '&'
                            + d['j_seq'].astype(str) + '\n' + d['structure'].astype(str) + '\n')
         return ''.join(l + '\n' for l in lines)
+
+
+HOSTED_GENOMES_URL = 'https://s3.amazonaws.com/igv.org.genomes/genomes.json'
+_hosted = {}
+
+
+def hosted_genome(genome_id):
+    """igv.js's hosted reference for an assembly id (dm6, hg38, mm39, ...), or None. Fetched once."""
+    import json
+    import urllib.request
+    if 'list' not in _hosted:
+        try:
+            with urllib.request.urlopen(HOSTED_GENOMES_URL, timeout=15) as r:
+                _hosted['list'] = {g['id']: g for g in json.load(r) if g.get('fastaURL')}
+        except Exception as e:  # offline, or the list moved
+            _hosted['list'] = {}
+            _hosted['error'] = str(e)
+    g = _hosted['list'].get(genome_id)
+    if not g:
+        return None
+    ref = {k: g[k] for k in ('id', 'name', 'fastaURL', 'indexURL', 'cytobandURL', 'aliasURL', 'chromosomeOrder', 'tracks') if k in g}
+    return ref
+
+
+def write_fai(fasta, out):
+    """A samtools-style .fai for an uncompressed FASTA (name, length, offset, bases per line, bytes per line)."""
+    with open(fasta, 'rb') as f, open(out, 'w') as o:
+        name, length, offset, bases_per_line, bytes_per_line, pos, first = None, 0, 0, 0, 0, 0, True
+        for line in f:
+            if line.startswith(b'>'):
+                if name is not None:
+                    o.write(f"{name}\t{length}\t{offset}\t{bases_per_line}\t{bytes_per_line}\n")
+                name, length, offset, bases_per_line, bytes_per_line, first = line[1:].split(None, 1)[0].decode(), 0, pos + len(line), 0, 0, True
+            elif name is not None:
+                n = len(line.rstrip(b'\r\n'))
+                if first and n:
+                    bases_per_line, bytes_per_line, first = n, len(line), False
+                length += n
+            pos += len(line)
+        if name is not None:
+            o.write(f"{name}\t{length}\t{offset}\t{bases_per_line}\t{bytes_per_line}\n")
+    return out
+
+
+def input_fasta_from_log(results_path):
+    """The FASTA a run was given, from its dsrnascan.log (None if unknown)."""
+    folder = Path(results_path) if Path(results_path).is_dir() else Path(results_path).parent
+    log = folder / 'dsrnascan.log'
+    if not log.exists():
+        return None
+    with open(log) as f:
+        names = [line.split('filename:', 1)[1].strip() for line in f if '  filename: ' in line]
+    if not names:
+        return None
+    name = names[-1]
+    for cand in (Path(name), folder / name, folder.parent / name, Path.cwd() / name):
+        if cand.is_file():
+            return str(cand)
+    return name  # not found as a file; still useful for the message

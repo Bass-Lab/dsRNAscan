@@ -2,6 +2,14 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.4] - 2026-10-23
+
+- `dsrna-browse` analysis tabs on the filtered set: distributions (over the full set), scatter with
+  box-select-to-filter, dsRNA density along chromosomes, group summaries and quantile statistics;
+  each chart downloads as PNG/SVG and its numbers as TSV.
+- IGV tab: igv.js with the dsRNAs as arcs per strand, following the filters, on a hosted assembly
+  (`--genome dm6`, auto-detected from the results name) or the run's own FASTA; editing sites as a track.
+
 ## [0.7.3] - 2026-10-21
 
 - The results table is now `<input>.dsrnas.parquet` (same columns; about a quarter the size, and
