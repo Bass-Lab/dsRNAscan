@@ -25,13 +25,14 @@ dsrnascan input.fasta
 dsrnascan genome.fasta --only_seq chr21 --start 33455482 --end 33655482
 ```
 
-By default dsRNAscan uses the settings of the human dsRNAome resource (`--v1`, on by default): windows of
-10000 and 3000 nt, step 150, and a banded fold that gives ~99% identical results to the exact one. Any
-setting you change is listed in `dsrnascan.log`.
+By default dsRNAscan uses the settings of the human dsRNAome resource (`--v1`, on by default): one
+10000 nt window, step 150, and a banded fold that gives ~99% identical results to the exact one. Any
+setting you change is listed in `<input>.dsrnascan.log`.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `-w` | 10000 and 3000 | Window size (one window of this size if set) |
+| `-w` | 10000 | Window size |
+| `--windows` | off | Several window sizes scanned and merged, e.g. `10000,3000` (the 0.7.0-0.7.4 default) |
 | `-s/--step` | 150 | Step size between windows |
 | `-c/--cpus` | 4 (whole allocation in a SLURM job) | Number of CPUs |
 | `--score` | 75 | Minimum einverted score |

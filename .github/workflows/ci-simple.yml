@@ -40,7 +40,7 @@ jobs:
 
     - name: dsrna-browse filters and exports
       run: |
-        test "$(dsrna-browse out --count)" -eq 348
+        test "$(dsrna-browse out --count)" -eq 282
         dsrna-browse out --min percent_paired 85 --export strong.gff3
         dsrna-browse out --export all.bedpe && cmp all.bedpe out/*.dsrnas.bedpe
 

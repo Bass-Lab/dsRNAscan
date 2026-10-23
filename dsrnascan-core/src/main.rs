@@ -44,12 +44,12 @@ fn main() {
             "--greed" => p.greed = num(val()),
             "--arm-overlap" => p.arm_frac = num(val()),
             "--no-rescue" => p.rescue = false,
+            "--no-nested" => p.overlap_frac = None,
             "--no-gu" => p.gu = false,
             "--minus-revcomp" => p.minus_revcomp = true,
             "--windows" => p.windows = val().split(',').map(|w| num(w.trim())).collect(),
             "--v1" => {
-                // settings used for the human dsRNAome resource
-                p.windows = vec![10_000, 3_000];
+                // settings used for the human dsRNAome resource: one 10 kb window (the default span)
                 p.window_step = Some(150);
                 p.min_bp = 0;
                 p.min_match_perc = 0.0;

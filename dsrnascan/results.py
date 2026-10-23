@@ -604,11 +604,12 @@ def write_fai(fasta, out):
 
 
 def input_fasta_from_log(results_path):
-    """The FASTA a run was given, from its dsrnascan.log (None if unknown)."""
+    """The FASTA a run was given, from its <stem>.dsrnascan.log (or a pre-0.7.5 dsrnascan.log); None if unknown."""
     folder = Path(results_path) if Path(results_path).is_dir() else Path(results_path).parent
-    log = folder / 'dsrnascan.log'
-    if not log.exists():
+    logs = sorted(folder.glob('*dsrnascan.log'))
+    if not logs:
         return None
+    log = logs[-1]
     with open(log) as f:
         names = [line.split('filename:', 1)[1].strip() for line in f if '  filename: ' in line]
     if not names:

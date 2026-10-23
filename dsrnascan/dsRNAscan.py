@@ -4,7 +4,7 @@ dsRNAscan - A tool for genome-wide prediction of double-stranded RNA structures
 Copyright (C) 2024 Bass Lab
 """
 
-__version__ = '0.7.4'
+__version__ = '0.7.5'
 __author__ = 'Bass Lab'
 
 import argparse
@@ -41,13 +41,13 @@ def default_cpus():
 BATCH_BP = 5_000_000  # sequences are scanned, scored and written in batches of at least this many bp
 
 
-# extra= for log lines that go to dsrnascan.log only, not the console
+# extra= for log lines that go to the log file only, not the console
 LOG_ONLY = {'log_only': True}
 
 
 def output_stem(args):
     """Short, filesystem-safe name for output files: the input name without FASTA extensions, plus
-    --only_seq if given, or --output_label. The run's settings are in dsrnascan.log."""
+    --only_seq if given, or --output_label. The run's settings are in <stem>.dsrnascan.log."""
     stem = os.path.basename(args.filename)
     if stem.endswith('.gz'):
         stem = stem[:-3]
@@ -76,7 +76,7 @@ def changed_from_defaults(args):
         'fold': 'banded' if args.banded else 'exact', 'temperature': f"{args.t:g} C",
         'minus strand': 'reverse complement' if args.minus_revcomp else 'same windows as plus',
     }
-    defaults = {'window': '10000, 3000', 'max_span': 'window', 'step': '150', 'score': '75', 'min_bp': '0',
+    defaults = {'window': '10000', 'max_span': 'window', 'step': '150', 'score': '75', 'min_bp': '0',
                 'paired_cutoff': '0', 'percent_paired_cutoff': '70', 'match': '3', 'mismatch': '-4',
                 'gaps': '12', 'fold': 'banded', 'temperature': '37 C', 'minus strand': 'reverse complement'}
     return [f"{k} {v} (default {defaults[k]})" for k, v in as_run.items() if v != defaults[k]]
@@ -435,7 +435,7 @@ def run_scan(args):
         while os.path.isdir(output_dir) and os.listdir(output_dir):
             output_dir, k = f"{stem}_dsrnascan_{k}", k + 1
     os.makedirs(output_dir, exist_ok=True)
-    log_file = os.path.join(output_dir, 'dsrnascan.log')
+    log_file = os.path.join(output_dir, f'{stem}.dsrnascan.log')
 
     root_logger = logging.getLogger()
     root_logger.handlers = []
@@ -450,7 +450,7 @@ def run_scan(args):
     console_handler.addFilter(lambda record: not getattr(record, 'log_only', False))
     root_logger.addHandler(console_handler)
 
-    logger.info(f"dsRNAscan {__version__}: {args.filename} -> {output_dir}/ (settings in dsrnascan.log)")
+    logger.info(f"dsRNAscan {__version__}: {args.filename} -> {output_dir}/ (settings in {stem}.dsrnascan.log)")
     logger.info(f"Command: {' '.join(sys.argv)}", extra=LOG_ONLY)
     logger.info("Settings as run:", extra=LOG_ONLY)
     for arg, value in sorted(vars(args).items()):
@@ -548,7 +548,9 @@ def main():
     parser.add_argument('-s', '--step', type=int, default=None,
                         help='Step size (default: 150)')
     parser.add_argument('-w', type=int, default=None,
-                        help='Window size (default: windows of 10000 and 3000; -w gives one window of that size)')
+                        help='Window size (default: 10000)')
+    parser.add_argument('--windows', type=str, default=None,
+                        help='Several window sizes scanned and merged, e.g. 10000,3000 (the 0.7.0-0.7.4 default)')
     parser.add_argument('--max_span', type=int, default=None,
                         help='Max span of inverted repeat; default = window size')
     parser.add_argument('--min_bp', type=int, default=None,
@@ -603,12 +605,14 @@ def main():
     # Get logger for main function
     logger = logging.getLogger(__name__)
     
-    # Defaults are the settings used for the human dsRNAome resource (--v1); each flag changes only
-    # its own setting (-w gives one window of that size), and the log lists what differs.
+    # Defaults are the settings of the human dsRNAome resource (--v1): one 10 kb window, step 150. Each
+    # flag changes only its own setting (--windows merges several window sizes), and the log lists what differs.
     if args.exact and args.banded:
         parser.error("--exact and --banded cannot be combined")
-    args.windows = [] if args.w is not None else [10000, 3000]
-    args.w = args.w or 10000
+    if args.windows and args.w is not None:
+        parser.error("-w and --windows cannot be combined")
+    args.windows = [int(x) for x in args.windows.split(',')] if args.windows else []
+    args.w = args.w or (max(args.windows) if args.windows else 10000)
     args.step = args.step or 150
     # einverted never searches past the window, so record the span actually used
     args.max_span = min(args.max_span or args.w, max(args.windows or [args.w]))

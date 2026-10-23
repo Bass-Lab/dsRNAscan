@@ -803,7 +803,7 @@ def main():
     p.add_argument('--large-editing-file', action='store_true', help=argparse.SUPPRESS)  # older option, no longer needed
     p.add_argument('--port', type=int, default=8080, help='web server port (default: 8080)')
     p.add_argument('--genome', help='for the IGV tab: an igv.js assembly id (hg38, mm39, dm6, ce11, ...) or the uncompressed '
-                                    'FASTA the scan used (default: the results name if it is a hosted assembly, else the FASTA from dsrnascan.log)')
+                                    'FASTA the scan used (default: the results name if it is a hosted assembly, else the FASTA named in the run log)')
     p.add_argument('--no-browser', action='store_true', help='do not open the web browser')
     x = p.add_argument_group('export instead of serving')
     x.add_argument('--export', metavar='FILE', help='write the filtered dsRNAs to FILE and exit; the format follows the '

@@ -2,6 +2,18 @@
 
 All notable changes to dsRNAscan will be documented in this file.
 
+## [0.7.5] - 2026-10-23
+
+- Default is one 10,000 nt window at step 150 again; `--windows 10000,3000` restores the merged
+  10 kb + 3 kb scan that was the default in 0.7.0-0.7.4. Measured on chr19 against the human
+  dsRNAome resource, the 3 kb pass recovers a further 17% of its dsRNAs but 97% of those are
+  alternative pairings of repeats the 10 kb pass already reports, and it adds about a third more
+  calls overall; the 10 kb scan alone has the resource's size, locus coverage and level of
+  arm-sharing redundancy. The engine CLI's `--v1` preset changes the same way.
+- The run log is named like the other outputs: `<input>.dsrnascan.log` (was `dsrnascan.log`);
+  `dsrna-browse` reads either.
+- Engine CLI: `--no-nested` keeps nested dsRNAs (every folded hit passing the filters).
+
 ## [0.7.4] - 2026-10-23
 
 - `dsrna-browse` analysis tabs on the filtered set: distributions (over the full set), scatter with
